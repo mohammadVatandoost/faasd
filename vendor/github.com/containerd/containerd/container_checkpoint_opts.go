@@ -19,7 +19,6 @@ package containerd
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"runtime"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/containerd/containerd/runtime/v2/runc/options"
 	"github.com/containerd/typeurl"
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 )
 
 var (

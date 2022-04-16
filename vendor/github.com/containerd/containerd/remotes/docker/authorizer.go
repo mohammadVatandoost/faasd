@@ -19,7 +19,6 @@ package docker
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -29,6 +28,7 @@ import (
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/remotes/docker/auth"
 	remoteerrors "github.com/containerd/containerd/remotes/errors"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -37,12 +37,10 @@ type dockerAuthorizer struct {
 
 	client *http.Client
 	header http.Header
-	mu     sync.RWMutex
+	mu     sync.Mutex
 
 	// indexed by host name
 	handlers map[string]*authHandler
-
-	onFetchRefreshToken OnFetchRefreshToken
 }
 
 // NewAuthorizer creates a Docker authorizer using the provided function to
@@ -53,10 +51,9 @@ func NewAuthorizer(client *http.Client, f func(string) (string, string, error)) 
 }
 
 type authorizerConfig struct {
-	credentials         func(string) (string, string, error)
-	client              *http.Client
-	header              http.Header
-	onFetchRefreshToken OnFetchRefreshToken
+	credentials func(string) (string, string, error)
+	client      *http.Client
+	header      http.Header
 }
 
 // AuthorizerOpt configures an authorizer
@@ -83,16 +80,6 @@ func WithAuthHeader(hdr http.Header) AuthorizerOpt {
 	}
 }
 
-// OnFetchRefreshToken is called on fetching request token.
-type OnFetchRefreshToken func(ctx context.Context, refreshToken string, req *http.Request)
-
-// WithFetchRefreshToken enables fetching "refresh token" (aka "identity token", "offline token").
-func WithFetchRefreshToken(f OnFetchRefreshToken) AuthorizerOpt {
-	return func(opt *authorizerConfig) {
-		opt.onFetchRefreshToken = f
-	}
-}
-
 // NewDockerAuthorizer creates an authorizer using Docker's registry
 // authentication spec.
 // See https://docs.docker.com/registry/spec/auth/
@@ -107,11 +94,10 @@ func NewDockerAuthorizer(opts ...AuthorizerOpt) Authorizer {
 	}
 
 	return &dockerAuthorizer{
-		credentials:         ao.credentials,
-		client:              ao.client,
-		header:              ao.header,
-		handlers:            make(map[string]*authHandler),
-		onFetchRefreshToken: ao.onFetchRefreshToken,
+		credentials: ao.credentials,
+		client:      ao.client,
+		header:      ao.header,
+		handlers:    make(map[string]*authHandler),
 	}
 }
 
@@ -123,21 +109,12 @@ func (a *dockerAuthorizer) Authorize(ctx context.Context, req *http.Request) err
 		return nil
 	}
 
-	auth, refreshToken, err := ah.authorize(ctx)
+	auth, err := ah.authorize(ctx)
 	if err != nil {
 		return err
 	}
 
 	req.Header.Set("Authorization", auth)
-
-	if refreshToken != "" {
-		a.mu.RLock()
-		onFetchRefreshToken := a.onFetchRefreshToken
-		a.mu.RUnlock()
-		if onFetchRefreshToken != nil {
-			onFetchRefreshToken(ctx, refreshToken, req)
-		}
-	}
 	return nil
 }
 
@@ -184,7 +161,6 @@ func (a *dockerAuthorizer) AddResponses(ctx context.Context, responses []*http.R
 			if err != nil {
 				return err
 			}
-			common.FetchRefreshToken = a.onFetchRefreshToken != nil
 
 			a.handlers[host] = newAuthHandler(a.client, a.header, c.Scheme, common)
 			return nil
@@ -205,15 +181,14 @@ func (a *dockerAuthorizer) AddResponses(ctx context.Context, responses []*http.R
 			}
 		}
 	}
-	return fmt.Errorf("failed to find supported auth scheme: %w", errdefs.ErrNotImplemented)
+	return errors.Wrap(errdefs.ErrNotImplemented, "failed to find supported auth scheme")
 }
 
 // authResult is used to control limit rate.
 type authResult struct {
 	sync.WaitGroup
-	token        string
-	refreshToken string
-	err          error
+	token string
+	err   error
 }
 
 // authHandler is used to handle auth request per registry server.
@@ -245,29 +220,29 @@ func newAuthHandler(client *http.Client, hdr http.Header, scheme auth.Authentica
 	}
 }
 
-func (ah *authHandler) authorize(ctx context.Context) (string, string, error) {
+func (ah *authHandler) authorize(ctx context.Context) (string, error) {
 	switch ah.scheme {
 	case auth.BasicAuth:
 		return ah.doBasicAuth(ctx)
 	case auth.BearerAuth:
 		return ah.doBearerAuth(ctx)
 	default:
-		return "", "", fmt.Errorf("failed to find supported auth scheme: %s: %w", string(ah.scheme), errdefs.ErrNotImplemented)
+		return "", errors.Wrapf(errdefs.ErrNotImplemented, "failed to find supported auth scheme: %s", string(ah.scheme))
 	}
 }
 
-func (ah *authHandler) doBasicAuth(ctx context.Context) (string, string, error) {
+func (ah *authHandler) doBasicAuth(ctx context.Context) (string, error) {
 	username, secret := ah.common.Username, ah.common.Secret
 
 	if username == "" || secret == "" {
-		return "", "", fmt.Errorf("failed to handle basic auth because missing username or secret")
+		return "", fmt.Errorf("failed to handle basic auth because missing username or secret")
 	}
 
 	auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + secret))
-	return fmt.Sprintf("Basic %s", auth), "", nil
+	return fmt.Sprintf("Basic %s", auth), nil
 }
 
-func (ah *authHandler) doBearerAuth(ctx context.Context) (token, refreshToken string, err error) {
+func (ah *authHandler) doBearerAuth(ctx context.Context) (token string, err error) {
 	// copy common tokenOptions
 	to := ah.common
 
@@ -280,7 +255,7 @@ func (ah *authHandler) doBearerAuth(ctx context.Context) (token, refreshToken st
 	if r, exist := ah.scopedTokens[scoped]; exist {
 		ah.Unlock()
 		r.Wait()
-		return r.token, r.refreshToken, r.err
+		return r.token, r.err
 	}
 
 	// only one fetch token job
@@ -291,16 +266,14 @@ func (ah *authHandler) doBearerAuth(ctx context.Context) (token, refreshToken st
 
 	defer func() {
 		token = fmt.Sprintf("Bearer %s", token)
-		r.token, r.refreshToken, r.err = token, refreshToken, err
+		r.token, r.err = token, err
 		r.Done()
 	}()
 
 	// fetch token for the resource scope
 	if to.Secret != "" {
 		defer func() {
-			if err != nil {
-				err = fmt.Errorf("failed to fetch oauth token: %w", err)
-			}
+			err = errors.Wrap(err, "failed to fetch oauth token")
 		}()
 		// credential information is provided, use oauth POST endpoint
 		// TODO: Allow setting client_id
@@ -311,29 +284,28 @@ func (ah *authHandler) doBearerAuth(ctx context.Context) (token, refreshToken st
 				// Registries without support for POST may return 404 for POST /v2/token.
 				// As of September 2017, GCR is known to return 404.
 				// As of February 2018, JFrog Artifactory is known to return 401.
-				// As of January 2022, ACR is known to return 400.
-				if (errStatus.StatusCode == 405 && to.Username != "") || errStatus.StatusCode == 404 || errStatus.StatusCode == 401 || errStatus.StatusCode == 400 {
+				if (errStatus.StatusCode == 405 && to.Username != "") || errStatus.StatusCode == 404 || errStatus.StatusCode == 401 {
 					resp, err := auth.FetchToken(ctx, ah.client, ah.header, to)
 					if err != nil {
-						return "", "", err
+						return "", err
 					}
-					return resp.Token, resp.RefreshToken, nil
+					return resp.Token, nil
 				}
 				log.G(ctx).WithFields(logrus.Fields{
 					"status": errStatus.Status,
 					"body":   string(errStatus.Body),
 				}).Debugf("token request failed")
 			}
-			return "", "", err
+			return "", err
 		}
-		return resp.AccessToken, resp.RefreshToken, nil
+		return resp.AccessToken, nil
 	}
 	// do request anonymously
 	resp, err := auth.FetchToken(ctx, ah.client, ah.header, to)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to fetch anonymous token: %w", err)
+		return "", errors.Wrap(err, "failed to fetch anonymous token")
 	}
-	return resp.Token, resp.RefreshToken, nil
+	return resp.Token, nil
 }
 
 func invalidAuthorization(c auth.Challenge, responses []*http.Response) error {
@@ -347,7 +319,7 @@ func invalidAuthorization(c auth.Challenge, responses []*http.Response) error {
 		return nil
 	}
 
-	return fmt.Errorf("server message: %s: %w", errStr, ErrInvalidAuthorization)
+	return errors.Wrapf(ErrInvalidAuthorization, "server message: %s", errStr)
 }
 
 func sameRequest(r1, r2 *http.Request) bool {

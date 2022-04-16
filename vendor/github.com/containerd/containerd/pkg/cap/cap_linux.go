@@ -19,11 +19,12 @@ package cap
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/pkg/errors"
 )
 
 // FromNumber returns a cap string like "CAP_SYS_ADMIN"
@@ -90,7 +91,7 @@ func ParseProcPIDStatus(r io.Reader) (map[Type]uint64, error) {
 		case "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb":
 			ui64, err := strconv.ParseUint(v, 16, 64)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse line %q", line)
+				return nil, errors.Errorf("failed to parse line %q", line)
 			}
 			switch k {
 			case "CapInh":
@@ -116,6 +117,9 @@ func ParseProcPIDStatus(r io.Reader) (map[Type]uint64, error) {
 // the current process.
 //
 // The result is like []string{"CAP_SYS_ADMIN", ...}.
+//
+// The result does not contain caps that are not recognized by
+// the "github.com/syndtr/gocapability" library.
 func Current() ([]string, error) {
 	f, err := os.Open("/proc/self/status")
 	if err != nil {

@@ -6,7 +6,7 @@ linters:
     - unconvert
     - gofmt
     - goimports
-    - revive
+    - golint
     - ineffassign
     - vet
     - unused
@@ -19,7 +19,7 @@ issues:
     - EXC0002
 
 run:
-  timeout: 8m
+  timeout: 3m
   skip-dirs:
     - api
     - design

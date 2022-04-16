@@ -21,6 +21,7 @@ import (
 	"io"
 
 	"github.com/containerd/containerd/errdefs"
+	"github.com/pkg/errors"
 )
 
 /*
@@ -70,7 +71,7 @@ func ParseAll(ss ...string) (Filter, error) {
 	for _, s := range ss {
 		f, err := Parse(s)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", err.Error(), errdefs.ErrInvalidArgument)
+			return nil, errors.Wrap(errdefs.ErrInvalidArgument, err.Error())
 		}
 
 		fs = append(fs, f)
@@ -89,7 +90,7 @@ func (p *parser) parse() (Filter, error) {
 
 	ss, err := p.selectors()
 	if err != nil {
-		return nil, fmt.Errorf("filters: %w", err)
+		return nil, errors.Wrap(err, "filters")
 	}
 
 	return ss, nil
@@ -283,9 +284,9 @@ func (pe parseError) Error() string {
 }
 
 func (p *parser) mkerr(pos int, format string, args ...interface{}) error {
-	return fmt.Errorf("parse error: %w", parseError{
+	return errors.Wrap(parseError{
 		input: p.input,
 		pos:   pos,
 		msg:   fmt.Sprintf(format, args...),
-	})
+	}, "parse error")
 }

@@ -74,17 +74,13 @@ func ContextWithAppendPullRepositoryScope(ctx context.Context, repo string) cont
 
 // GetTokenScopes returns deduplicated and sorted scopes from ctx.Value(tokenScopesKey{}) and common scopes.
 func GetTokenScopes(ctx context.Context, common []string) []string {
-	scopes := []string{}
+	var scopes []string
 	if x := ctx.Value(tokenScopesKey{}); x != nil {
 		scopes = append(scopes, x.([]string)...)
 	}
 
 	scopes = append(scopes, common...)
 	sort.Strings(scopes)
-
-	if len(scopes) == 0 {
-		return scopes
-	}
 
 	l := 0
 	for idx := 1; idx < len(scopes); idx++ {

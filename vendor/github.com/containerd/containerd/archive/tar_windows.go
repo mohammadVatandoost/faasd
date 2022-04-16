@@ -1,3 +1,5 @@
+// +build windows
+
 /*
    Copyright The containerd Authors.
 
@@ -18,12 +20,12 @@ package archive
 
 import (
 	"archive/tar"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/containerd/containerd/sys"
+	"github.com/pkg/errors"
 )
 
 // tarName returns platform-specific filepath
@@ -112,7 +114,7 @@ func setxattr(path, key, value string) error {
 
 func copyDirInfo(fi os.FileInfo, path string) error {
 	if err := os.Chmod(path, fi.Mode()); err != nil {
-		return fmt.Errorf("failed to chmod %s: %w", path, err)
+		return errors.Wrapf(err, "failed to chmod %s", path)
 	}
 	return nil
 }

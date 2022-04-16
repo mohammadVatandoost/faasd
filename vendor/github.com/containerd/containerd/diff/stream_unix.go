@@ -1,4 +1,3 @@
-//go:build !windows
 // +build !windows
 
 /*
@@ -22,15 +21,15 @@ package diff
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"sync"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/gogo/protobuf/types"
-	exec "golang.org/x/sys/execabs"
+	"github.com/pkg/errors"
 )
 
 // NewBinaryProcessor returns a binary processor for use with processing content streams

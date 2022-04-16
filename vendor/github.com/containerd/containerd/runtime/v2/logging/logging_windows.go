@@ -1,3 +1,5 @@
+// +build windows
+
 /*
    Copyright The containerd Authors.
 
@@ -18,7 +20,6 @@ package logging
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"syscall"
 
 	"github.com/Microsoft/go-winio"
+	"github.com/pkg/errors"
 )
 
 // Run the logging driver
@@ -53,19 +55,19 @@ func runInternal(fn LoggerFunc) error {
 		return errors.New("'CONTAINER_STDOUT' environment variable missing")
 	}
 	if sout, err = winio.DialPipeContext(ctx, soutPipe); err != nil {
-		return fmt.Errorf("unable to dial stdout pipe: %w", err)
+		return errors.Wrap(err, "unable to dial stdout pipe")
 	}
 
 	if serrPipe, ok = os.LookupEnv("CONTAINER_STDERR"); !ok {
 		return errors.New("'CONTAINER_STDERR' environment variable missing")
 	}
 	if serr, err = winio.DialPipeContext(ctx, serrPipe); err != nil {
-		return fmt.Errorf("unable to dial stderr pipe: %w", err)
+		return errors.Wrap(err, "unable to dial stderr pipe")
 	}
 
 	waitPipe = os.Getenv("CONTAINER_WAIT")
 	if wait, err = winio.DialPipeContext(ctx, waitPipe); err != nil {
-		return fmt.Errorf("unable to dial wait pipe: %w", err)
+		return errors.Wrap(err, "unable to dial wait pipe")
 	}
 
 	config := &Config{

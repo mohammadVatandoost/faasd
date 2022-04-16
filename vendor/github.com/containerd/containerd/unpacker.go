@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -37,6 +36,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/identity"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -65,16 +65,11 @@ func (c *Client) newUnpacker(ctx context.Context, rCtx *RemoteContext) (*unpacke
 			return nil, err
 		}
 	}
-	var limiter *semaphore.Weighted
-	if rCtx.MaxConcurrentDownloads > 0 {
-		limiter = semaphore.NewWeighted(int64(rCtx.MaxConcurrentDownloads))
-	}
 	return &unpacker{
 		updateCh:    make(chan ocispec.Descriptor, 128),
 		snapshotter: snapshotter,
 		config:      config,
 		c:           c,
-		limiter:     limiter,
 	}, nil
 }
 
@@ -92,18 +87,18 @@ func (u *unpacker) unpack(
 
 	var i ocispec.Image
 	if err := json.Unmarshal(p, &i); err != nil {
-		return fmt.Errorf("unmarshal image config: %w", err)
+		return errors.Wrap(err, "unmarshal image config")
 	}
 	diffIDs := i.RootFS.DiffIDs
 	if len(layers) != len(diffIDs) {
-		return fmt.Errorf("number of layers and diffIDs don't match: %d != %d", len(layers), len(diffIDs))
+		return errors.Errorf("number of layers and diffIDs don't match: %d != %d", len(layers), len(diffIDs))
 	}
 
 	if u.config.CheckPlatformSupported {
 		imgPlatform := platforms.Normalize(ocispec.Platform{OS: i.OS, Architecture: i.Architecture})
 		snapshotterPlatformMatcher, err := u.c.GetSnapshotterSupportedPlatforms(ctx, u.snapshotter)
 		if err != nil {
-			return fmt.Errorf("failed to find supported platforms for snapshotter %s: %w", u.snapshotter, err)
+			return errors.Wrapf(err, "failed to find supported platforms for snapshotter %s", u.snapshotter)
 		}
 		if !snapshotterPlatformMatcher.Match(imgPlatform) {
 			return fmt.Errorf("snapshotter %s does not support platform %s for image %s", u.snapshotter, imgPlatform, config.Digest)
@@ -137,7 +132,7 @@ EachLayer:
 			// no need to handle
 			continue
 		} else if !errdefs.IsNotFound(err) {
-			return fmt.Errorf("failed to stat snapshot %s: %w", chainID, err)
+			return errors.Wrapf(err, "failed to stat snapshot %s", chainID)
 		}
 
 		// inherits annotations which are provided as snapshot labels.
@@ -161,7 +156,7 @@ EachLayer:
 				if errdefs.IsAlreadyExists(err) {
 					if _, err := sn.Stat(ctx, chainID); err != nil {
 						if !errdefs.IsNotFound(err) {
-							return fmt.Errorf("failed to stat snapshot %s: %w", chainID, err)
+							return errors.Wrapf(err, "failed to stat snapshot %s", chainID)
 						}
 						// Try again, this should be rare, log it
 						log.G(ctx).WithField("key", key).WithField("chainid", chainID).Debug("extraction snapshot already exists, chain id not found")
@@ -170,14 +165,14 @@ EachLayer:
 						continue EachLayer
 					}
 				} else {
-					return fmt.Errorf("failed to prepare extraction snapshot %q: %w", key, err)
+					return errors.Wrapf(err, "failed to prepare extraction snapshot %q", key)
 				}
 			} else {
 				break
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("unable to prepare extraction snapshot: %w", err)
+			return errors.Wrap(err, "unable to prepare extraction snapshot")
 		}
 
 		// Abort the snapshot if commit does not happen
@@ -217,11 +212,11 @@ EachLayer:
 		diff, err := a.Apply(ctx, desc, mounts, u.config.ApplyOpts...)
 		if err != nil {
 			abort()
-			return fmt.Errorf("failed to extract layer %s: %w", diffIDs[i], err)
+			return errors.Wrapf(err, "failed to extract layer %s", diffIDs[i])
 		}
 		if diff.Digest != diffIDs[i] {
 			abort()
-			return fmt.Errorf("wrong diff id calculated on extraction %q", diffIDs[i])
+			return errors.Errorf("wrong diff id calculated on extraction %q", diffIDs[i])
 		}
 
 		if err = sn.Commit(ctx, chainID, key, opts...); err != nil {
@@ -229,7 +224,7 @@ EachLayer:
 			if errdefs.IsAlreadyExists(err) {
 				continue
 			}
-			return fmt.Errorf("failed to commit snapshot %s: %w", key, err)
+			return errors.Wrapf(err, "failed to commit snapshot %s", key)
 		}
 
 		// Set the uncompressed label after the uncompressed

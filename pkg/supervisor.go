@@ -8,8 +8,6 @@ import (
 	"os"
 	"path"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/alexellis/k3sup/pkg/env"
 	"github.com/compose-spec/compose-go/loader"
@@ -24,13 +22,11 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/containerd/containerd/namespaces"
-	units "github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 const (
-	// workingDirectoryPermission user read/write/execute, group and others: read-only
-	workingDirectoryPermission = 0744
+	workingDirectoryPermission = 0644
 )
 
 type Service struct {
@@ -83,7 +79,7 @@ func NewSupervisor(sock string) (*Supervisor, error) {
 }
 
 func (s *Supervisor) Start(svcs []Service) error {
-	ctx := namespaces.WithNamespace(context.Background(), FaasdNamespace)
+	ctx := namespaces.WithNamespace(context.Background(), faasdNamespace)
 
 	wd, _ := os.Getwd()
 
@@ -102,6 +98,8 @@ func (s *Supervisor) Start(svcs []Service) error {
 		return fmt.Errorf("cannot write hosts file: %s", writeHostsErr)
 	}
 
+	fmt.Printf("******* write hosts: %s to Dir : %s\n", hosts, wd)
+
 	images := map[string]containerd.Image{}
 
 	for _, svc := range svcs {
@@ -113,7 +111,7 @@ func (s *Supervisor) Start(svcs []Service) error {
 		}
 		images[svc.Name] = img
 		size, _ := img.Size(ctx)
-		fmt.Printf("Prepare done for: %s, %s\n", svc.Image, units.HumanSize(float64(size)))
+		fmt.Printf("Prepare done for: %s, %d bytes\n", svc.Image, size)
 	}
 
 	for _, svc := range svcs {
@@ -149,28 +147,6 @@ func (s *Supervisor) Start(svcs []Service) error {
 					Type:        "bind",
 					Options:     []string{"rbind", "rw"},
 				})
-
-				// Only create directories, not files.
-				// Some files don't have a suffix, such as secrets.
-				if len(path.Ext(mnt.Src)) == 0 &&
-					!strings.HasPrefix(mnt.Src, "/var/lib/faasd/secrets/") {
-					// src is already prefixed with wd from an earlier step
-					src := mnt.Src
-					fmt.Printf("Creating local directory: %s\n", src)
-					if err := os.MkdirAll(src, workingDirectoryPermission); err != nil {
-						if !errors.Is(os.ErrExist, err) {
-							fmt.Printf("Unable to create: %s, %s\n", src, err)
-						}
-					}
-					if len(svc.User) > 0 {
-						uid, err := strconv.Atoi(svc.User)
-						if err == nil {
-							if err := os.Chown(src, uid, -1); err != nil {
-								fmt.Printf("Unable to chown: %s to %d, error: %s\n", src, uid, err)
-							}
-						}
-					}
-				}
 			}
 		}
 
@@ -211,7 +187,7 @@ func (s *Supervisor) Start(svcs []Service) error {
 			return err
 		}
 
-		log.Printf("Created container: %s\n", newContainer.ID())
+		log.Printf("Created container: %s, svc-name: %s \n", newContainer.ID(), svc.Name)
 
 		task, err := newContainer.NewTask(ctx, cio.BinaryIO("/usr/local/bin/faasd", nil))
 		if err != nil {
@@ -269,7 +245,7 @@ func (s *Supervisor) Close() {
 }
 
 func (s *Supervisor) Remove(svcs []Service) error {
-	ctx := namespaces.WithNamespace(context.Background(), FaasdNamespace)
+	ctx := namespaces.WithNamespace(context.Background(), faasdNamespace)
 
 	for _, svc := range svcs {
 		err := cninetwork.DeleteCNINetwork(ctx, s.cni, s.client, svc.Name)

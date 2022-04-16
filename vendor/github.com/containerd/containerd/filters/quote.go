@@ -17,8 +17,9 @@
 package filters
 
 import (
-	"errors"
 	"unicode/utf8"
+
+	"github.com/pkg/errors"
 )
 
 // NOTE(stevvooe): Most of this code in this file is copied from the stdlib

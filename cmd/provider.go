@@ -1,8 +1,8 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -12,17 +12,13 @@ import (
 	"github.com/containerd/containerd"
 	bootstrap "github.com/openfaas/faas-provider"
 	"github.com/openfaas/faas-provider/logs"
-	"github.com/openfaas/faas-provider/proxy"
 	"github.com/openfaas/faas-provider/types"
-	faasd "github.com/openfaas/faasd/pkg"
 	"github.com/openfaas/faasd/pkg/cninetwork"
 	faasdlogs "github.com/openfaas/faasd/pkg/logs"
 	"github.com/openfaas/faasd/pkg/provider/config"
 	"github.com/openfaas/faasd/pkg/provider/handlers"
 	"github.com/spf13/cobra"
 )
-
-const secretDirPermission = 0755
 
 func makeProviderCmd() *cobra.Command {
 	var command = &cobra.Command{
@@ -85,25 +81,23 @@ func makeProviderCmd() *cobra.Command {
 
 		invokeResolver := handlers.NewInvokeResolver(client)
 
-		baseUserSecretsPath := path.Join(wd, "secrets")
-		if err := moveSecretsToDefaultNamespaceSecrets(
-			baseUserSecretsPath,
-			faasd.DefaultFunctionNamespace); err != nil {
-			return err
-		}
+		userSecretPath := path.Join(wd, "secrets")
+
+		initHandler()
 
 		bootstrapHandlers := types.FaaSHandlers{
-			FunctionProxy:        proxy.NewHandlerFunc(*config, invokeResolver),
+			// FunctionProxy:        proxy.NewHandlerFunc(*config, invokeResolver),
+			FunctionProxy:        NewHandlerFunc(*config, invokeResolver),
 			DeleteHandler:        handlers.MakeDeleteHandler(client, cni),
-			DeployHandler:        handlers.MakeDeployHandler(client, cni, baseUserSecretsPath, alwaysPull),
+			DeployHandler:        handlers.MakeDeployHandler(client, cni, userSecretPath, alwaysPull),
 			FunctionReader:       handlers.MakeReadHandler(client),
 			ReplicaReader:        handlers.MakeReplicaReaderHandler(client),
 			ReplicaUpdater:       handlers.MakeReplicaUpdateHandler(client, cni),
-			UpdateHandler:        handlers.MakeUpdateHandler(client, cni, baseUserSecretsPath, alwaysPull),
+			UpdateHandler:        handlers.MakeUpdateHandler(client, cni, userSecretPath, alwaysPull),
 			HealthHandler:        func(w http.ResponseWriter, r *http.Request) {},
 			InfoHandler:          handlers.MakeInfoHandler(Version, GitCommit),
-			ListNamespaceHandler: handlers.MakeNamespacesLister(client),
-			SecretHandler:        handlers.MakeSecretHandler(client.NamespaceService(), baseUserSecretsPath),
+			ListNamespaceHandler: listNamespaces(),
+			SecretHandler:        handlers.MakeSecretHandler(client, userSecretPath),
 			LogHandler:           logs.NewLogHandlerFunc(faasdlogs.New(), config.ReadTimeout),
 		}
 
@@ -115,62 +109,10 @@ func makeProviderCmd() *cobra.Command {
 	return command
 }
 
-/*
-* Mutiple namespace support was added after release 0.13.0
-* Function will help users to migrate on multiple namespace support of faasd
- */
-func moveSecretsToDefaultNamespaceSecrets(baseSecretPath string, defaultNamespace string) error {
-	newSecretPath := path.Join(baseSecretPath, defaultNamespace)
-
-	err := ensureSecretsDir(newSecretPath)
-	if err != nil {
-		return err
+func listNamespaces() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		list := []string{""}
+		out, _ := json.Marshal(list)
+		w.Write(out)
 	}
-
-	files, err := ioutil.ReadDir(baseSecretPath)
-	if err != nil {
-		return err
-	}
-
-	for _, f := range files {
-		if !f.IsDir() {
-
-			newPath := path.Join(newSecretPath, f.Name())
-
-			// A non-nil error means the file wasn't found in the
-			// destination path
-			if _, err := os.Stat(newPath); err != nil {
-				oldPath := path.Join(baseSecretPath, f.Name())
-
-				if err := copyFile(oldPath, newPath); err != nil {
-					return err
-				}
-
-				log.Printf("[Migration] Copied %s to %s", oldPath, newPath)
-			}
-		}
-	}
-
-	return nil
-}
-
-func copyFile(src, dst string) error {
-	inputFile, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("opening %s failed %w", src, err)
-	}
-	defer inputFile.Close()
-
-	outputFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_APPEND, secretDirPermission)
-	if err != nil {
-		return fmt.Errorf("opening %s failed %w", dst, err)
-	}
-	defer outputFile.Close()
-
-	// Changed from os.Rename due to issue in #201
-	if _, err := io.Copy(outputFile, inputFile); err != nil {
-		return fmt.Errorf("writing into %s failed %w", outputFile.Name(), err)
-	}
-
-	return nil
 }

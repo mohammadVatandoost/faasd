@@ -20,11 +20,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -37,7 +36,8 @@ import (
 	"github.com/containerd/continuity/fs"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/opencontainers/runc/libcontainer/user"
-	"github.com/opencontainers/runtime-spec/specs-go"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/pkg/errors"
 )
 
 // SpecOpts sets spec specific information to a newly generated OCI spec
@@ -138,7 +138,7 @@ func WithSpecFromBytes(p []byte) SpecOpts {
 	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
 		*s = Spec{} // make sure spec is cleared.
 		if err := json.Unmarshal(p, s); err != nil {
-			return fmt.Errorf("decoding spec config file failed, current supported OCI runtime-spec : v%s: %w", specs.Version, err)
+			return errors.Wrapf(err, "decoding spec config file failed, current supported OCI runtime-spec : v%s", specs.Version)
 		}
 		return nil
 	}
@@ -147,9 +147,9 @@ func WithSpecFromBytes(p []byte) SpecOpts {
 // WithSpecFromFile loads the specification from the provided filename.
 func WithSpecFromFile(filename string) SpecOpts {
 	return func(ctx context.Context, c Client, container *containers.Container, s *Spec) error {
-		p, err := os.ReadFile(filename)
+		p, err := ioutil.ReadFile(filename)
 		if err != nil {
-			return fmt.Errorf("cannot load spec config file: %w", err)
+			return errors.Wrap(err, "cannot load spec config file")
 		}
 		return WithSpecFromBytes(p)(ctx, c, container, s)
 	}
@@ -522,18 +522,6 @@ func WithNamespacedCgroup() SpecOpts {
 func WithUser(userstr string) SpecOpts {
 	return func(ctx context.Context, client Client, c *containers.Container, s *Spec) error {
 		setProcess(s)
-
-		// For LCOW it's a bit harder to confirm that the user actually exists on the host as a rootfs isn't
-		// mounted on the host and shared into the guest, but rather the rootfs is constructed entirely in the
-		// guest itself. To accommodate this, a spot to place the user string provided by a client as-is is needed.
-		// The `Username` field on the runtime spec is marked by Platform as only for Windows, and in this case it
-		// *is* being set on a Windows host at least, but will be used as a temporary holding spot until the guest
-		// can use the string to perform these same operations to grab the uid:gid inside.
-		if s.Windows != nil && s.Linux != nil {
-			s.Process.User.Username = userstr
-			return nil
-		}
-
 		parts := strings.Split(userstr, ":")
 		switch len(parts) {
 		case 1:
@@ -602,8 +590,6 @@ func WithUser(userstr string) SpecOpts {
 			if err != nil {
 				return err
 			}
-
-			mounts = tryReadonlyMounts(mounts)
 			return mount.WithTempMount(ctx, mounts, f)
 		default:
 			return fmt.Errorf("invalid USER value %s", userstr)
@@ -630,7 +616,7 @@ func WithUserID(uid uint32) SpecOpts {
 		setProcess(s)
 		if c.Snapshotter == "" && c.SnapshotKey == "" {
 			if !isRootfsAbs(s.Root.Path) {
-				return errors.New("rootfs absolute path is required")
+				return errors.Errorf("rootfs absolute path is required")
 			}
 			user, err := UserFromPath(s.Root.Path, func(u user.User) bool {
 				return u.Uid == int(uid)
@@ -647,18 +633,16 @@ func WithUserID(uid uint32) SpecOpts {
 
 		}
 		if c.Snapshotter == "" {
-			return errors.New("no snapshotter set for container")
+			return errors.Errorf("no snapshotter set for container")
 		}
 		if c.SnapshotKey == "" {
-			return errors.New("rootfs snapshot not created for container")
+			return errors.Errorf("rootfs snapshot not created for container")
 		}
 		snapshotter := client.SnapshotService(c.Snapshotter)
 		mounts, err := snapshotter.Mounts(ctx, c.SnapshotKey)
 		if err != nil {
 			return err
 		}
-
-		mounts = tryReadonlyMounts(mounts)
 		return mount.WithTempMount(ctx, mounts, func(root string) error {
 			user, err := UserFromPath(root, func(u user.User) bool {
 				return u.Uid == int(uid)
@@ -679,16 +663,14 @@ func WithUserID(uid uint32) SpecOpts {
 // WithUsername sets the correct UID and GID for the container
 // based on the image's /etc/passwd contents. If /etc/passwd
 // does not exist, or the username is not found in /etc/passwd,
-// it returns error. On Windows this sets the username as provided,
-// the operating system will validate the user when going to run
-// the container.
+// it returns error.
 func WithUsername(username string) SpecOpts {
 	return func(ctx context.Context, client Client, c *containers.Container, s *Spec) (err error) {
 		setProcess(s)
 		if s.Linux != nil {
 			if c.Snapshotter == "" && c.SnapshotKey == "" {
 				if !isRootfsAbs(s.Root.Path) {
-					return errors.New("rootfs absolute path is required")
+					return errors.Errorf("rootfs absolute path is required")
 				}
 				user, err := UserFromPath(s.Root.Path, func(u user.User) bool {
 					return u.Name == username
@@ -700,18 +682,16 @@ func WithUsername(username string) SpecOpts {
 				return nil
 			}
 			if c.Snapshotter == "" {
-				return errors.New("no snapshotter set for container")
+				return errors.Errorf("no snapshotter set for container")
 			}
 			if c.SnapshotKey == "" {
-				return errors.New("rootfs snapshot not created for container")
+				return errors.Errorf("rootfs snapshot not created for container")
 			}
 			snapshotter := client.SnapshotService(c.Snapshotter)
 			mounts, err := snapshotter.Mounts(ctx, c.SnapshotKey)
 			if err != nil {
 				return err
 			}
-
-			mounts = tryReadonlyMounts(mounts)
 			return mount.WithTempMount(ctx, mounts, func(root string) error {
 				user, err := UserFromPath(root, func(u user.User) bool {
 					return u.Name == username
@@ -736,8 +716,8 @@ func WithUsername(username string) SpecOpts {
 // The passed in user can be either a uid or a username.
 func WithAdditionalGIDs(userstr string) SpecOpts {
 	return func(ctx context.Context, client Client, c *containers.Container, s *Spec) (err error) {
-		// For LCOW or on Darwin additional GID's not supported
-		if s.Windows != nil || runtime.GOOS == "darwin" {
+		// For LCOW additional GID's not supported
+		if s.Windows != nil {
 			return nil
 		}
 		setProcess(s)
@@ -781,23 +761,21 @@ func WithAdditionalGIDs(userstr string) SpecOpts {
 		}
 		if c.Snapshotter == "" && c.SnapshotKey == "" {
 			if !isRootfsAbs(s.Root.Path) {
-				return errors.New("rootfs absolute path is required")
+				return errors.Errorf("rootfs absolute path is required")
 			}
 			return setAdditionalGids(s.Root.Path)
 		}
 		if c.Snapshotter == "" {
-			return errors.New("no snapshotter set for container")
+			return errors.Errorf("no snapshotter set for container")
 		}
 		if c.SnapshotKey == "" {
-			return errors.New("rootfs snapshot not created for container")
+			return errors.Errorf("rootfs snapshot not created for container")
 		}
 		snapshotter := client.SnapshotService(c.Snapshotter)
 		mounts, err := snapshotter.Mounts(ctx, c.SnapshotKey)
 		if err != nil {
 			return err
 		}
-
-		mounts = tryReadonlyMounts(mounts)
 		return mount.WithTempMount(ctx, mounts, setAdditionalGids)
 	}
 }
@@ -810,6 +788,7 @@ func WithCapabilities(caps []string) SpecOpts {
 		s.Process.Capabilities.Bounding = caps
 		s.Process.Capabilities.Effective = caps
 		s.Process.Capabilities.Permitted = caps
+		s.Process.Capabilities.Inheritable = caps
 
 		return nil
 	}
@@ -844,6 +823,7 @@ func WithAddedCapabilities(caps []string) SpecOpts {
 				&s.Process.Capabilities.Bounding,
 				&s.Process.Capabilities.Effective,
 				&s.Process.Capabilities.Permitted,
+				&s.Process.Capabilities.Inheritable,
 			} {
 				if !capsContain(*cl, c) {
 					*cl = append(*cl, c)
@@ -863,6 +843,7 @@ func WithDroppedCapabilities(caps []string) SpecOpts {
 				&s.Process.Capabilities.Bounding,
 				&s.Process.Capabilities.Effective,
 				&s.Process.Capabilities.Permitted,
+				&s.Process.Capabilities.Inheritable,
 			} {
 				removeCap(cl, c)
 			}
@@ -877,7 +858,7 @@ func WithDroppedCapabilities(caps []string) SpecOpts {
 func WithAmbientCapabilities(caps []string) SpecOpts {
 	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
 		setCapabilities(s)
-		s.Process.Capabilities.Inheritable = caps
+
 		s.Process.Capabilities.Ambient = caps
 		return nil
 	}
@@ -1219,7 +1200,7 @@ func WithLinuxDevice(path, permissions string) SpecOpts {
 		setLinux(s)
 		setResources(s)
 
-		dev, err := DeviceFromPath(path)
+		dev, err := deviceFromPath(path)
 		if err != nil {
 			return err
 		}
@@ -1267,37 +1248,19 @@ var ErrNoShmMount = errors.New("no /dev/shm mount specified")
 //
 // The size value is specified in kb, kilobytes.
 func WithDevShmSize(kb int64) SpecOpts {
-	return func(ctx context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		for i, m := range s.Mounts {
-			if filepath.Clean(m.Destination) == "/dev/shm" && m.Source == "shm" && m.Type == "tmpfs" {
-				for i := 0; i < len(m.Options); i++ {
-					if strings.HasPrefix(m.Options[i], "size=") {
-						m.Options = append(m.Options[:i], m.Options[i+1:]...)
-						i--
+	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
+		for _, m := range s.Mounts {
+			if m.Source == "shm" && m.Type == "tmpfs" {
+				for i, o := range m.Options {
+					if strings.HasPrefix(o, "size=") {
+						m.Options[i] = fmt.Sprintf("size=%dk", kb)
+						return nil
 					}
 				}
-				s.Mounts[i].Options = append(m.Options, fmt.Sprintf("size=%dk", kb))
+				m.Options = append(m.Options, fmt.Sprintf("size=%dk", kb))
 				return nil
 			}
 		}
 		return ErrNoShmMount
 	}
-}
-
-// tryReadonlyMounts is used by the options which are trying to get user/group
-// information from container's rootfs. Since the option does read operation
-// only, this helper will append ReadOnly mount option to prevent linux kernel
-// from syncing whole filesystem in umount syscall.
-//
-// TODO(fuweid):
-//
-// Currently, it only works for overlayfs. I think we can apply it to other
-// kinds of filesystem. Maybe we can return `ro` option by `snapshotter.Mount`
-// API, when the caller passes that experimental annotation
-// `containerd.io/snapshot/readonly.mount` something like that.
-func tryReadonlyMounts(mounts []mount.Mount) []mount.Mount {
-	if len(mounts) == 1 && mounts[0].Type == "overlay" {
-		mounts[0].Options = append(mounts[0].Options, "ro")
-	}
-	return mounts
 }

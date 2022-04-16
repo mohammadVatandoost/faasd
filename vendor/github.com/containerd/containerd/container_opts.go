@@ -18,20 +18,15 @@ package containerd
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
 
 	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/typeurl"
 	"github.com/gogo/protobuf/types"
 	"github.com/opencontainers/image-spec/identity"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 )
 
 // DeleteOpts allows the caller to set options for the deletion of a container
@@ -96,39 +91,6 @@ func WithImageName(n string) NewContainerOpts {
 func WithContainerLabels(labels map[string]string) NewContainerOpts {
 	return func(_ context.Context, _ *Client, c *containers.Container) error {
 		c.Labels = labels
-		return nil
-	}
-}
-
-// WithImageConfigLabels sets the image config labels on the container.
-// The existing labels are cleared as this is expected to be the first
-// operation in setting up a container's labels. Use WithAdditionalContainerLabels
-// to add/overwrite the existing image config labels.
-func WithImageConfigLabels(image Image) NewContainerOpts {
-	return func(ctx context.Context, _ *Client, c *containers.Container) error {
-		ic, err := image.Config(ctx)
-		if err != nil {
-			return err
-		}
-		var (
-			ociimage v1.Image
-			config   v1.ImageConfig
-		)
-		switch ic.MediaType {
-		case v1.MediaTypeImageConfig, images.MediaTypeDockerSchema2Config:
-			p, err := content.ReadBlob(ctx, image.ContentStore(), ic)
-			if err != nil {
-				return err
-			}
-
-			if err := json.Unmarshal(p, &ociimage); err != nil {
-				return err
-			}
-			config = ociimage.Config
-		default:
-			return fmt.Errorf("unknown image config media type %s", ic.MediaType)
-		}
-		c.Labels = config.Labels
 		return nil
 	}
 }
@@ -227,7 +189,7 @@ func WithNewSnapshot(id string, i Image, opts ...snapshots.Opt) NewContainerOpts
 func WithSnapshotCleanup(ctx context.Context, client *Client, c containers.Container) error {
 	if c.SnapshotKey != "" {
 		if c.Snapshotter == "" {
-			return fmt.Errorf("container.Snapshotter must be set to cleanup rootfs snapshot: %w", errdefs.ErrInvalidArgument)
+			return errors.Wrapf(errdefs.ErrInvalidArgument, "container.Snapshotter must be set to cleanup rootfs snapshot")
 		}
 		s, err := client.getSnapshotter(ctx, c.Snapshotter)
 		if err != nil {
@@ -276,15 +238,15 @@ func WithNewSnapshotView(id string, i Image, opts ...snapshots.Opt) NewContainer
 func WithContainerExtension(name string, extension interface{}) NewContainerOpts {
 	return func(ctx context.Context, client *Client, c *containers.Container) error {
 		if name == "" {
-			return fmt.Errorf("extension key must not be zero-length: %w", errdefs.ErrInvalidArgument)
+			return errors.Wrapf(errdefs.ErrInvalidArgument, "extension key must not be zero-length")
 		}
 
 		any, err := typeurl.MarshalAny(extension)
 		if err != nil {
 			if errors.Is(err, typeurl.ErrNotFound) {
-				return fmt.Errorf("extension %q is not registered with the typeurl package, see `typeurl.Register`: %w", name, err)
+				return errors.Wrapf(err, "extension %q is not registered with the typeurl package, see `typeurl.Register`", name)
 			}
-			return fmt.Errorf("error marshalling extension: %w", err)
+			return errors.Wrap(err, "error marshalling extension")
 		}
 
 		if c.Extensions == nil {

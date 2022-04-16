@@ -14,24 +14,10 @@ func MakeReplicaReaderHandler(client *containerd.Client) func(w http.ResponseWri
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		functionName := vars["name"]
-		lookupNamespace := getRequestNamespace(readNamespaceFromQuery(r))
 
-		// Check if namespace exists, and it has the openfaas label
-		valid, err := validNamespace(client.NamespaceService(), lookupNamespace)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if !valid {
-			http.Error(w, "namespace not valid", http.StatusBadRequest)
-			return
-		}
-
-		if f, err := GetFunction(client, functionName, lookupNamespace); err == nil {
+		if f, err := GetFunction(client, functionName); err == nil {
 			found := types.FunctionStatus{
 				Name:              functionName,
-				Image:             f.image,
 				AvailableReplicas: uint64(f.replicas),
 				Replicas:          uint64(f.replicas),
 				Namespace:         f.namespace,

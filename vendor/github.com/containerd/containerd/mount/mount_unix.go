@@ -1,4 +1,3 @@
-//go:build darwin || openbsd
 // +build darwin openbsd
 
 /*
@@ -19,7 +18,7 @@
 
 package mount
 
-import "errors"
+import "github.com/pkg/errors"
 
 var (
 	// ErrNotImplementOnUnix is returned for methods that are not implemented

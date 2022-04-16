@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -12,9 +11,9 @@ import (
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
-	"github.com/openfaas/faasd/pkg"
-	faasd "github.com/openfaas/faasd/pkg"
 	"github.com/openfaas/faasd/pkg/cninetwork"
+
+	faasd "github.com/openfaas/faasd/pkg"
 )
 
 type Function struct {
@@ -29,24 +28,12 @@ type Function struct {
 	secrets     []string
 	envVars     map[string]string
 	envProcess  string
-	memoryLimit int64
 	createdAt   time.Time
 }
 
 // ListFunctions returns a map of all functions with running tasks on namespace
-func ListFunctions(client *containerd.Client, namespace string) (map[string]*Function, error) {
-
-	// Check if namespace exists, and it has the openfaas label
-	valid, err := validNamespace(client.NamespaceService(), namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	if !valid {
-		return nil, errors.New("namespace not valid")
-	}
-
-	ctx := namespaces.WithNamespace(context.Background(), namespace)
+func ListFunctions(client *containerd.Client) (map[string]*Function, error) {
+	ctx := namespaces.WithNamespace(context.Background(), faasd.FunctionNamespace)
 	functions := make(map[string]*Function)
 
 	containers, err := client.Containers(ctx)
@@ -56,7 +43,7 @@ func ListFunctions(client *containerd.Client, namespace string) (map[string]*Fun
 
 	for _, c := range containers {
 		name := c.ID()
-		f, err := GetFunction(client, name, namespace)
+		f, err := GetFunction(client, name)
 		if err != nil {
 			log.Printf("error getting function %s: ", name)
 			return functions, err
@@ -68,13 +55,13 @@ func ListFunctions(client *containerd.Client, namespace string) (map[string]*Fun
 }
 
 // GetFunction returns a function that matches name
-func GetFunction(client *containerd.Client, name string, namespace string) (Function, error) {
-	ctx := namespaces.WithNamespace(context.Background(), namespace)
+func GetFunction(client *containerd.Client, name string) (Function, error) {
+	ctx := namespaces.WithNamespace(context.Background(), faasd.FunctionNamespace)
 	fn := Function{}
 
 	c, err := client.LoadContainer(ctx, name)
 	if err != nil {
-		return Function{}, fmt.Errorf("unable to find function: %s, error %w", name, err)
+		return Function{}, fmt.Errorf("unable to find function: %s, error %s", name, err)
 	}
 
 	image, err := c.Image(ctx)
@@ -86,26 +73,26 @@ func GetFunction(client *containerd.Client, name string, namespace string) (Func
 	allLabels, labelErr := c.Labels(ctx)
 
 	if labelErr != nil {
-		log.Printf("cannot list container %s labels: %s", containerName, labelErr)
+		log.Printf("cannot list container %s labels: %s", containerName, labelErr.Error())
 	}
 
 	labels, annotations := buildLabelsAndAnnotations(allLabels)
 
 	spec, err := c.Spec(ctx)
 	if err != nil {
-		return Function{}, fmt.Errorf("unable to load function %s error: %w", name, err)
+		return Function{}, fmt.Errorf("unable to load function spec for reading secrets: %s, error %s", name, err)
 	}
 
 	info, err := c.Info(ctx)
 	if err != nil {
-		return Function{}, fmt.Errorf("can't load info for: %s, error %w", name, err)
+		return Function{}, fmt.Errorf("can't load info for: %s, error %s", name, err)
 	}
 
 	envVars, envProcess := readEnvFromProcessEnv(spec.Process.Env)
 	secrets := readSecretsFromMounts(spec.Mounts)
 
 	fn.name = containerName
-	fn.namespace = namespace
+	fn.namespace = faasd.FunctionNamespace
 	fn.image = image.Name()
 	fn.labels = labels
 	fn.annotations = annotations
@@ -113,7 +100,6 @@ func GetFunction(client *containerd.Client, name string, namespace string) (Func
 	fn.envVars = envVars
 	fn.envProcess = envProcess
 	fn.createdAt = info.CreatedAt
-	fn.memoryLimit = readMemoryLimitFromSpec(spec)
 
 	replicas := 0
 	task, err := c.Task(ctx, nil)
@@ -121,7 +107,7 @@ func GetFunction(client *containerd.Client, name string, namespace string) (Func
 		// Task for container exists
 		svc, err := task.Status(ctx)
 		if err != nil {
-			return Function{}, fmt.Errorf("unable to get task status for container: %s %w", name, err)
+			return Function{}, fmt.Errorf("unable to get task status for container: %s %s", name, err)
 		}
 
 		if svc.Status == "running" {
@@ -194,49 +180,4 @@ func buildLabelsAndAnnotations(ctrLabels map[string]string) (map[string]string, 
 	}
 
 	return labels, annotations
-}
-
-func ListNamespaces(client *containerd.Client) []string {
-	set := []string{}
-	store := client.NamespaceService()
-	namespaces, err := store.List(context.Background())
-	if err != nil {
-		log.Printf("Error listing namespaces: %s", err.Error())
-		set = append(set, faasd.DefaultFunctionNamespace)
-		return set
-	}
-
-	for _, namespace := range namespaces {
-		labels, err := store.Labels(context.Background(), namespace)
-		if err != nil {
-			log.Printf("Error listing label for namespace %s: %s", namespace, err.Error())
-			continue
-		}
-
-		if _, found := labels[pkg.NamespaceLabel]; found {
-			set = append(set, namespace)
-		}
-
-		if !findNamespace(faasd.DefaultFunctionNamespace, set) {
-			set = append(set, faasd.DefaultFunctionNamespace)
-		}
-	}
-
-	return set
-}
-
-func findNamespace(target string, items []string) bool {
-	for _, n := range items {
-		if n == target {
-			return true
-		}
-	}
-	return false
-}
-
-func readMemoryLimitFromSpec(spec *specs.Spec) int64 {
-	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.Memory == nil || spec.Linux.Resources.Memory.Limit == nil {
-		return 0
-	}
-	return *spec.Linux.Resources.Memory.Limit
 }

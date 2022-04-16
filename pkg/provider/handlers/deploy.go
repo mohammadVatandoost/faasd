@@ -20,6 +20,7 @@ import (
 	"github.com/docker/distribution/reference"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/openfaas/faas-provider/types"
+	faasd "github.com/openfaas/faasd/pkg"
 	cninetwork "github.com/openfaas/faasd/pkg/cninetwork"
 	"github.com/openfaas/faasd/pkg/service"
 	"github.com/pkg/errors"
@@ -51,32 +52,15 @@ func MakeDeployHandler(client *containerd.Client, cni gocni.CNI, secretMountPath
 			return
 		}
 
-		namespace := getRequestNamespace(req.Namespace)
-
-		// Check if namespace exists, and it has the openfaas label
-		valid, err := validNamespace(client.NamespaceService(), namespace)
-
+		err = validateSecrets(secretMountPath, req.Secrets)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if !valid {
-			http.Error(w, "namespace not valid", http.StatusBadRequest)
-			return
-		}
-
-		namespaceSecretMountPath := getNamespaceSecretMountPath(secretMountPath, namespace)
-		err = validateSecrets(namespaceSecretMountPath, req.Secrets)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
 		}
 
 		name := req.Service
-		ctx := namespaces.WithNamespace(context.Background(), namespace)
+		ctx := namespaces.WithNamespace(context.Background(), faasd.FunctionNamespace)
 
-		deployErr := deploy(ctx, req, client, cni, namespaceSecretMountPath, alwaysPull)
+		deployErr := deploy(ctx, req, client, cni, secretMountPath, alwaysPull)
 		if deployErr != nil {
 			log.Printf("[Deploy] error deploying %s, error: %s\n", name, deployErr)
 			http.Error(w, deployErr.Error(), http.StatusBadRequest)
@@ -126,7 +110,7 @@ func deploy(ctx context.Context, req types.FunctionDeployment, client *container
 	}
 
 	envs := prepareEnv(req.EnvProcess, req.EnvVars)
-	mounts := getOSMounts()
+	mounts := getMounts()
 
 	for _, secret := range req.Secrets {
 		mounts = append(mounts, specs.Mount{
@@ -141,7 +125,7 @@ func deploy(ctx context.Context, req types.FunctionDeployment, client *container
 
 	labels, err := buildLabels(&req)
 	if err != nil {
-		return fmt.Errorf("unable to apply labels to container: %s, error: %w", name, err)
+		return fmt.Errorf("Unable to apply labels to conatiner: %s, error: %s", name, err)
 	}
 
 	var memory *specs.LinuxMemory
@@ -172,10 +156,10 @@ func deploy(ctx context.Context, req types.FunctionDeployment, client *container
 	)
 
 	if err != nil {
-		return fmt.Errorf("unable to create container: %s, error: %w", name, err)
+		return fmt.Errorf("unable to create container: %s, error: %s", name, err)
 	}
 
-	return createTask(ctx, container, cni)
+	return createTask(ctx, client, container, cni)
 
 }
 
@@ -203,14 +187,14 @@ func buildLabels(request *types.FunctionDeployment) (map[string]string, error) {
 	return labels, nil
 }
 
-func createTask(ctx context.Context, container containerd.Container, cni gocni.CNI) error {
+func createTask(ctx context.Context, client *containerd.Client, container containerd.Container, cni gocni.CNI) error {
 
 	name := container.ID()
 
 	task, taskErr := container.NewTask(ctx, cio.BinaryIO("/usr/local/bin/faasd", nil))
 
 	if taskErr != nil {
-		return fmt.Errorf("unable to start task: %s, error: %w", name, taskErr)
+		return fmt.Errorf("unable to start task: %s, error: %s", name, taskErr)
 	}
 
 	log.Printf("Container ID: %s\tTask ID %s:\tTask PID: %d\t\n", name, task.ID(), task.Pid())
@@ -262,28 +246,20 @@ func prepareEnv(envProcess string, reqEnvVars map[string]string) []string {
 	return envs
 }
 
-// getOSMounts provides a mount for os-specific files such
-// as the hosts file and resolv.conf
-func getOSMounts() []specs.Mount {
-	// Prior to hosts_dir env-var, this value was set to
-	// os.Getwd()
-	hostsDir := "/var/lib/faasd"
-	if v, ok := os.LookupEnv("hosts_dir"); ok && len(v) > 0 {
-		hostsDir = v
-	}
-
+func getMounts() []specs.Mount {
+	wd, _ := os.Getwd()
 	mounts := []specs.Mount{}
 	mounts = append(mounts, specs.Mount{
 		Destination: "/etc/resolv.conf",
 		Type:        "bind",
-		Source:      path.Join(hostsDir, "resolv.conf"),
+		Source:      path.Join(wd, "resolv.conf"),
 		Options:     []string{"rbind", "ro"},
 	})
 
 	mounts = append(mounts, specs.Mount{
 		Destination: "/etc/hosts",
 		Type:        "bind",
-		Source:      path.Join(hostsDir, "hosts"),
+		Source:      path.Join(wd, "hosts"),
 		Options:     []string{"rbind", "ro"},
 	})
 	return mounts

@@ -1,6 +1,5 @@
 # faasd - a lightweight & portable faas engine
 
-[![Sponsor this](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&link=https://github.com/sponsors/openfaas)](https://github.com/sponsors/openfaas)
 [![Build Status](https://github.com/openfaas/faasd/workflows/build/badge.svg?branch=master)](https://github.com/openfaas/faasd/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenFaaS](https://img.shields.io/badge/openfaas-serverless-blue.svg)](https://www.openfaas.com)
@@ -45,7 +44,7 @@ Additional resources:
 
 Most importantly, it's easy to manage so you can set it up and leave it alone to run your functions.
 
-[![demo](https://pbs.twimg.com/media/EPNQz00W4AEwDxM?format=jpg&name=medium)](https://www.youtube.com/watch?v=WX1tZoSXy8E)
+![demo](https://pbs.twimg.com/media/EPNQz00W4AEwDxM?format=jpg&name=small)
 
 > Demo of faasd running asynchronous functions
 
@@ -166,7 +165,5 @@ If you are learning faasd, or want to share your use-case, you can join the Open
 For completed features, WIP and upcoming roadmap see:
 
 See [ROADMAP.md](docs/ROADMAP.md)
-
-Want to build a patch without setting up a complete development environment? See [docs/PATCHES.md](docs/PATCHES.md)
 
 Are you looking to hack on faasd? Follow the [developer instructions](docs/DEV.md) for a manual installation, or use the `hack/install.sh` script and pick up from there.

@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"strings"
 
 	"github.com/containerd/containerd"
-	faasd "github.com/openfaas/faasd/pkg"
 )
 
 const watchdogPort = 8080
@@ -21,18 +19,11 @@ func NewInvokeResolver(client *containerd.Client) *InvokeResolver {
 }
 
 func (i *InvokeResolver) Resolve(functionName string) (url.URL, error) {
-	actualFunctionName := functionName
-	log.Printf("Resolve: %q\n", actualFunctionName)
+	log.Printf("Resolve: %q\n", functionName)
 
-	namespace := getNamespace(functionName, faasd.DefaultFunctionNamespace)
-
-	if strings.Contains(functionName, ".") {
-		actualFunctionName = strings.TrimSuffix(functionName, "."+namespace)
-	}
-
-	function, err := GetFunction(i.client, actualFunctionName, namespace)
+	function, err := GetFunction(i.client, functionName)
 	if err != nil {
-		return url.URL{}, fmt.Errorf("%s not found", actualFunctionName)
+		return url.URL{}, fmt.Errorf("%s not found", functionName)
 	}
 
 	serviceIP := function.IP
@@ -45,12 +36,4 @@ func (i *InvokeResolver) Resolve(functionName string) (url.URL, error) {
 	}
 
 	return *urlRes, nil
-}
-
-func getNamespace(name, defaultNamespace string) string {
-	namespace := defaultNamespace
-	if strings.Contains(name, ".") {
-		namespace = name[strings.LastIndexAny(name, ".")+1:]
-	}
-	return namespace
 }

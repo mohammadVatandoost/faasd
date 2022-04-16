@@ -17,12 +17,12 @@
 package docker
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/moby/locker"
+	"github.com/pkg/errors"
 )
 
 // Status of a content operation
@@ -30,9 +30,6 @@ type Status struct {
 	content.Status
 
 	Committed bool
-
-	// ErrClosed contains error encountered on close.
-	ErrClosed error
 
 	// UploadUUID is used by the Docker registry to reference blob uploads
 	UploadUUID string
@@ -70,7 +67,7 @@ func (t *memoryStatusTracker) GetStatus(ref string) (Status, error) {
 	defer t.m.Unlock()
 	status, ok := t.statuses[ref]
 	if !ok {
-		return Status{}, fmt.Errorf("status for ref %v: %w", ref, errdefs.ErrNotFound)
+		return Status{}, errors.Wrapf(errdefs.ErrNotFound, "status for ref %v", ref)
 	}
 	return status, nil
 }

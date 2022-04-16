@@ -27,20 +27,10 @@
 ```
 droplet_ip = 178.128.39.201
 gateway_url = https://faasd.example.com/
-```
-
-8) View the output for sensitive data via `terraform output` command
-
-```bash
-terraform output login_cmd
-login_cmd = faas-cli login -g http://178.128.39.201:8080/ -p rvIU49CEcFcHmqxj
-
-terraform output password
+login_cmd = faas-cli login -g https://faasd.example.com/ -p rvIU49CEcFcHmqxj
 password = rvIU49CEcFcHmqxj
 ```
-
-
-9) Use your browser to access the OpenFaaS interface
+8) Use your browser to access the OpenFaaS interface
 
 Note that the user-data may take a couple of minutes to come up since it will be pulling in various components and preparing the machine. 
 Also take into consideration the DNS propagation time for the new DNS record.

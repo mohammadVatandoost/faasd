@@ -10,14 +10,13 @@ import (
 	"path"
 	"strings"
 
+	"github.com/containerd/containerd"
 	"github.com/openfaas/faas-provider/types"
-	provider "github.com/openfaas/faasd/pkg/provider"
 )
 
 const secretFilePermission = 0644
-const secretDirPermission = 0755
 
-func MakeSecretHandler(store provider.Labeller, mountPath string) func(w http.ResponseWriter, r *http.Request) {
+func MakeSecretHandler(c *containerd.Client, mountPath string) func(w http.ResponseWriter, r *http.Request) {
 
 	err := os.MkdirAll(mountPath, secretFilePermission)
 	if err != nil {
@@ -31,13 +30,13 @@ func MakeSecretHandler(store provider.Labeller, mountPath string) func(w http.Re
 
 		switch r.Method {
 		case http.MethodGet:
-			listSecrets(store, w, r, mountPath)
+			listSecrets(c, w, r, mountPath)
 		case http.MethodPost:
-			createSecret(w, r, mountPath)
+			createSecret(c, w, r, mountPath)
 		case http.MethodPut:
-			createSecret(w, r, mountPath)
+			createSecret(c, w, r, mountPath)
 		case http.MethodDelete:
-			deleteSecret(w, r, mountPath)
+			deleteSecret(c, w, r, mountPath)
 		default:
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -46,46 +45,23 @@ func MakeSecretHandler(store provider.Labeller, mountPath string) func(w http.Re
 	}
 }
 
-func listSecrets(store provider.Labeller, w http.ResponseWriter, r *http.Request, mountPath string) {
-
-	lookupNamespace := getRequestNamespace(readNamespaceFromQuery(r))
-	// Check if namespace exists, and it has the openfaas label
-	valid, err := validNamespace(store, lookupNamespace)
+func listSecrets(c *containerd.Client, w http.ResponseWriter, r *http.Request, mountPath string) {
+	files, err := ioutil.ReadDir(mountPath)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if !valid {
-		http.Error(w, "namespace not valid", http.StatusBadRequest)
-		return
-	}
-
-	mountPath = getNamespaceSecretMountPath(mountPath, lookupNamespace)
-
-	files, err := os.ReadDir(mountPath)
-	if os.IsNotExist(err) {
-		bytesOut, _ := json.Marshal([]types.Secret{})
-		w.Write(bytesOut)
-		return
-	}
-
-	if err != nil {
-		fmt.Printf("Error Occured: %s \n", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	secrets := []types.Secret{}
 	for _, f := range files {
-		secrets = append(secrets, types.Secret{Name: f.Name(), Namespace: lookupNamespace})
+		secrets = append(secrets, types.Secret{Name: f.Name()})
 	}
 
 	bytesOut, _ := json.Marshal(secrets)
 	w.Write(bytesOut)
 }
 
-func createSecret(w http.ResponseWriter, r *http.Request, mountPath string) {
+func createSecret(c *containerd.Client, w http.ResponseWriter, r *http.Request, mountPath string) {
 	secret, err := parseSecret(r)
 	if err != nil {
 		log.Printf("[secret] error %s", err.Error())
@@ -93,30 +69,7 @@ func createSecret(w http.ResponseWriter, r *http.Request, mountPath string) {
 		return
 	}
 
-	err = validateSecret(secret)
-	if err != nil {
-		log.Printf("[secret] error %s", err.Error())
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	log.Printf("[secret] is valid: %q", secret.Name)
-	namespace := getRequestNamespace(secret.Namespace)
-	mountPath = getNamespaceSecretMountPath(mountPath, namespace)
-
-	err = os.MkdirAll(mountPath, secretDirPermission)
-	if err != nil {
-		log.Printf("[secret] error %s", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	data := secret.RawValue
-	if len(data) == 0 {
-		data = []byte(secret.Value)
-	}
-
-	err = ioutil.WriteFile(path.Join(mountPath, secret.Name), data, secretFilePermission)
+	err = ioutil.WriteFile(path.Join(mountPath, secret.Name), []byte(secret.Value), secretFilePermission)
 
 	if err != nil {
 		log.Printf("[secret] error %s", err.Error())
@@ -125,16 +78,13 @@ func createSecret(w http.ResponseWriter, r *http.Request, mountPath string) {
 	}
 }
 
-func deleteSecret(w http.ResponseWriter, r *http.Request, mountPath string) {
+func deleteSecret(c *containerd.Client, w http.ResponseWriter, r *http.Request, mountPath string) {
 	secret, err := parseSecret(r)
 	if err != nil {
 		log.Printf("[secret] error %s", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	namespace := getRequestNamespace(readNamespaceFromQuery(r))
-	mountPath = getNamespaceSecretMountPath(mountPath, namespace)
 
 	err = os.Remove(path.Join(mountPath, secret.Name))
 
@@ -157,6 +107,10 @@ func parseSecret(r *http.Request) (types.Secret, error) {
 		return secret, err
 	}
 
+	if isTraversal(secret.Name) {
+		return secret, fmt.Errorf(traverseErrorSt)
+	}
+
 	return secret, err
 }
 
@@ -165,14 +119,4 @@ const traverseErrorSt = "directory traversal found in name"
 func isTraversal(name string) bool {
 	return strings.Contains(name, fmt.Sprintf("%s", string(os.PathSeparator))) ||
 		strings.Contains(name, "..")
-}
-
-func validateSecret(secret types.Secret) error {
-	if strings.TrimSpace(secret.Name) == "" {
-		return fmt.Errorf("non-empty name is required")
-	}
-	if isTraversal(secret.Name) {
-		return fmt.Errorf(traverseErrorSt)
-	}
-	return nil
 }

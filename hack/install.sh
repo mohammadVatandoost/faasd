@@ -1,8 +1,10 @@
 #!/bin/bash
 
-# Copyright OpenFaaS Author(s) 2022
+# Copyright OpenFaaS Author(s) 2020
 
-set -e -x -o pipefail
+#########################
+# Repo specific content #
+#########################
 
 export OWNER="openfaas"
 export REPO="faasd"
@@ -37,32 +39,21 @@ has_apt_get() {
   [ -n "$(command -v apt-get)" ]
 }
 
-has_pacman() {
-  [ -n "$(command -v pacman)" ]
-}
-
 install_required_packages() {
   if $(has_apt_get); then
-    # Debian bullseye is missing iptables. Added to required packages
-    # to get it working in raspberry pi. No such known issues in
-    # other distros. Hence, adding only to this block.
-    # reference: https://github.com/openfaas/faasd/pull/237
     $SUDO apt-get update -y
-    $SUDO apt-get install -y curl runc bridge-utils iptables
+    $SUDO apt-get install -y curl runc bridge-utils
   elif $(has_yum); then
     $SUDO yum check-update -y
     $SUDO yum install -y curl runc
-  elif $(has_pacman); then
-    $SUDO pacman -Syy
-    $SUDO pacman -Sy curl runc bridge-utils
   else
-    fatal "Could not find apt-get, yum, or pacman. Cannot install dependencies on this OS."
+    fatal "Could not find apt-get or yum. Cannot install dependencies on this OS."
     exit 1
   fi
 }
 
 install_cni_plugins() {
-  cni_version=v0.9.1
+  cni_version=v0.8.5
   suffix=""
   arch=$(uname -m)
   case $arch in
@@ -86,17 +77,15 @@ install_cni_plugins() {
 
 install_containerd() {
   arch=$(uname -m)
-  CONTAINERD_VER=1.6.2
   case $arch in
   x86_64 | amd64)
-    curl -sLSf https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VER}/containerd-${CONTAINERD_VER}-linux-amd64.tar.gz | $SUDO tar -xvz --strip-components=1 -C /usr/local/bin/
+    curl -sLSf https://github.com/containerd/containerd/releases/download/v1.5.4/containerd-1.5.4-linux-amd64.tar.gz | $SUDO tar -xvz --strip-components=1 -C /usr/local/bin/
     ;;
   armv7l)
-    curl -sSL https://github.com/alexellis/containerd-arm/releases/download/v${CONTAINERD_VER}/containerd-${CONTAINERD_VER}-linux-armhf.tar.gz | $SUDO tar -xvz --strip-components=1 -C /usr/local/bin/
+    curl -sSL https://github.com/alexellis/containerd-arm/releases/download/v1.5.4/containerd-1.5.4-linux-armhf.tar.gz | $SUDO tar -xvz --strip-components=1 -C /usr/local/bin/
     ;;
   aarch64)
-      curl -sLSf https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VER}/containerd-${CONTAINERD_VER}-linux-arm64.tar.gz | $SUDO tar -xvz --strip-components=1 -C /usr/local/bin/
-
+    curl -sSL https://github.com/alexellis/containerd-arm/releases/download/v1.5.4/containerd-1.5.4-linux-arm64.tar.gz | $SUDO tar -xvz --strip-components=1 -C /usr/local/bin/
     ;;
   *)
     fatal "Unsupported architecture $arch"
@@ -104,7 +93,7 @@ install_containerd() {
   esac
 
   $SUDO systemctl unmask containerd || :
-  $SUDO curl -SLfs https://raw.githubusercontent.com/containerd/containerd/v${CONTAINERD_VER}/containerd.service --output /etc/systemd/system/containerd.service
+  $SUDO curl -SLfs https://raw.githubusercontent.com/containerd/containerd/v1.5.4/containerd.service --output /etc/systemd/system/containerd.service
   $SUDO systemctl enable containerd
   $SUDO systemctl start containerd
 

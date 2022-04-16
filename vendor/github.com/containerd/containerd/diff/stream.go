@@ -18,7 +18,6 @@ package diff
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/containerd/containerd/images"
 	"github.com/gogo/protobuf/types"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 )
 
 var (

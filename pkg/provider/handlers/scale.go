@@ -13,6 +13,7 @@ import (
 	gocni "github.com/containerd/go-cni"
 
 	"github.com/openfaas/faas-provider/types"
+	faasd "github.com/openfaas/faasd/pkg"
 )
 
 func MakeReplicaUpdateHandler(client *containerd.Client, cni gocni.CNI) func(w http.ResponseWriter, r *http.Request) {
@@ -39,30 +40,16 @@ func MakeReplicaUpdateHandler(client *containerd.Client, cni gocni.CNI) func(w h
 			return
 		}
 
-		namespace := getRequestNamespace(readNamespaceFromQuery(r))
-
-		// Check if namespace exists, and it has the openfaas label
-		valid, err := validNamespace(client.NamespaceService(), namespace)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if !valid {
-			http.Error(w, "namespace not valid", http.StatusBadRequest)
-			return
-		}
-
 		name := req.ServiceName
 
-		if _, err := GetFunction(client, name, namespace); err != nil {
+		if _, err := GetFunction(client, name); err != nil {
 			msg := fmt.Sprintf("service %s not found", name)
 			log.Printf("[Scale] %s\n", msg)
 			http.Error(w, msg, http.StatusNotFound)
 			return
 		}
 
-		ctx := namespaces.WithNamespace(context.Background(), namespace)
+		ctx := namespaces.WithNamespace(context.Background(), faasd.FunctionNamespace)
 
 		ctr, ctrErr := client.LoadContainer(ctx, name)
 		if ctrErr != nil {
@@ -131,7 +118,7 @@ func MakeReplicaUpdateHandler(client *containerd.Client, cni gocni.CNI) func(w h
 		}
 
 		if createNewTask {
-			deployErr := createTask(ctx, ctr, cni)
+			deployErr := createTask(ctx, client, ctr, cni)
 			if deployErr != nil {
 				log.Printf("[Scale] error deploying %s, error: %s\n", name, deployErr)
 				http.Error(w, deployErr.Error(), http.StatusBadRequest)

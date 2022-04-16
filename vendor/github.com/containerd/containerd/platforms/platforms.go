@@ -107,8 +107,6 @@
 package platforms
 
 import (
-	"fmt"
-	"path"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -116,6 +114,7 @@ import (
 
 	"github.com/containerd/containerd/errdefs"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -167,14 +166,14 @@ func (m *matcher) String() string {
 func Parse(specifier string) (specs.Platform, error) {
 	if strings.Contains(specifier, "*") {
 		// TODO(stevvooe): need to work out exact wildcard handling
-		return specs.Platform{}, fmt.Errorf("%q: wildcards not yet supported: %w", specifier, errdefs.ErrInvalidArgument)
+		return specs.Platform{}, errors.Wrapf(errdefs.ErrInvalidArgument, "%q: wildcards not yet supported", specifier)
 	}
 
 	parts := strings.Split(specifier, "/")
 
 	for _, part := range parts {
 		if !specifierRe.MatchString(part) {
-			return specs.Platform{}, fmt.Errorf("%q is an invalid component of %q: platform specifier component must match %q: %w", part, specifier, specifierRe.String(), errdefs.ErrInvalidArgument)
+			return specs.Platform{}, errors.Wrapf(errdefs.ErrInvalidArgument, "%q is an invalid component of %q: platform specifier component must match %q", part, specifier, specifierRe.String())
 		}
 	}
 
@@ -206,7 +205,7 @@ func Parse(specifier string) (specs.Platform, error) {
 			return p, nil
 		}
 
-		return specs.Platform{}, fmt.Errorf("%q: unknown operating system or architecture: %w", specifier, errdefs.ErrInvalidArgument)
+		return specs.Platform{}, errors.Wrapf(errdefs.ErrInvalidArgument, "%q: unknown operating system or architecture", specifier)
 	case 2:
 		// In this case, we treat as a regular os/arch pair. We don't care
 		// about whether or not we know of the platform.
@@ -228,7 +227,7 @@ func Parse(specifier string) (specs.Platform, error) {
 		return p, nil
 	}
 
-	return specs.Platform{}, fmt.Errorf("%q: cannot parse platform specifier: %w", specifier, errdefs.ErrInvalidArgument)
+	return specs.Platform{}, errors.Wrapf(errdefs.ErrInvalidArgument, "%q: cannot parse platform specifier", specifier)
 }
 
 // MustParse is like Parses but panics if the specifier cannot be parsed.
@@ -247,7 +246,20 @@ func Format(platform specs.Platform) string {
 		return "unknown"
 	}
 
-	return path.Join(platform.OS, platform.Architecture, platform.Variant)
+	return joinNotEmpty(platform.OS, platform.Architecture, platform.Variant)
+}
+
+func joinNotEmpty(s ...string) string {
+	var ss []string
+	for _, s := range s {
+		if s == "" {
+			continue
+		}
+
+		ss = append(ss, s)
+	}
+
+	return strings.Join(ss, "/")
 }
 
 // Normalize validates and translate the platform to the canonical value.
@@ -257,5 +269,10 @@ func Format(platform specs.Platform) string {
 func Normalize(platform specs.Platform) specs.Platform {
 	platform.OS = normalizeOS(platform.OS)
 	platform.Architecture, platform.Variant = normalizeArch(platform.Architecture, platform.Variant)
+
+	// these fields are deprecated, remove them
+	platform.OSFeatures = nil
+	platform.OSVersion = ""
+
 	return platform
 }

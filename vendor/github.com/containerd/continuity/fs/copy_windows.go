@@ -17,60 +17,19 @@
 package fs
 
 import (
-	"errors"
-	"fmt"
 	"io"
 	"os"
 
-	winio "github.com/Microsoft/go-winio"
-	"golang.org/x/sys/windows"
+	"github.com/pkg/errors"
 )
 
-const (
-	seTakeOwnershipPrivilege = "SeTakeOwnershipPrivilege"
-)
-
-func copyFileInfo(fi os.FileInfo, src, name string) error {
+func copyFileInfo(fi os.FileInfo, name string) error {
 	if err := os.Chmod(name, fi.Mode()); err != nil {
-		return fmt.Errorf("failed to chmod %s: %w", name, err)
+		return errors.Wrapf(err, "failed to chmod %s", name)
 	}
 
-	// Copy file ownership and ACL
-	// We need SeRestorePrivilege and SeTakeOwnershipPrivilege in order
-	// to restore security info on a file, especially if we're trying to
-	// apply security info which includes SIDs not necessarily present on
-	// the host.
-	privileges := []string{winio.SeRestorePrivilege, seTakeOwnershipPrivilege}
-	if err := winio.EnableProcessPrivileges(privileges); err != nil {
-		return err
-	}
-	defer winio.DisableProcessPrivileges(privileges)
+	// TODO: copy windows specific metadata
 
-	secInfo, err := windows.GetNamedSecurityInfo(
-		src, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-
-	if err != nil {
-		return err
-	}
-
-	dacl, _, err := secInfo.DACL()
-	if err != nil {
-		return err
-	}
-
-	sid, _, err := secInfo.Owner()
-	if err != nil {
-		return err
-	}
-
-	if err := windows.SetNamedSecurityInfo(
-		name, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
-		sid, nil, dacl, nil); err != nil {
-
-		return err
-	}
 	return nil
 }
 

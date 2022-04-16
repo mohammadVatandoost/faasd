@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package agent;
+
+option go_package = "agent";
+
+service TasksRequest {
+  rpc TaskAssign (TaskRequest) returns (TaskResponse) {}
+}
+
+message TaskRequest {
+  string functionName = 1;
+  string exteraPath = 2;
+  bytes serializeReq = 3;
+  repeated string requestHashes = 4;
+  int64 timeNanoSecond = 5;
+  bool cacheHit = 6;
+}
+
+message TaskResponse {
+  string message = 1;
+  bytes response = 2;
+  repeated bytes responses = 3;
+}

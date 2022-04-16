@@ -18,15 +18,15 @@ package plugin
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/events/exchange"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 )
 
-// InitContext is used for plugin initialization
+// InitContext is used for plugin inititalization
 type InitContext struct {
 	Context      context.Context
 	Root         string
@@ -34,9 +34,7 @@ type InitContext struct {
 	Config       interface{}
 	Address      string
 	TTRPCAddress string
-
-	// deprecated: will be removed in 2.0, use plugin.EventType
-	Events *exchange.Exchange
+	Events       *exchange.Exchange
 
 	Meta *Meta // plugins can fill in metadata at init.
 
@@ -117,7 +115,7 @@ func (ps *Set) Add(p *Plugin) error {
 	} else if _, idok := byID[p.Registration.ID]; !idok {
 		byID[p.Registration.ID] = p
 	} else {
-		return fmt.Errorf("plugin %v already initialized: %w", p.Registration.URI(), errdefs.ErrAlreadyExists)
+		return errors.Wrapf(errdefs.ErrAlreadyExists, "plugin %v already initialized", p.Registration.URI())
 	}
 
 	ps.ordered = append(ps.ordered, p)
@@ -129,42 +127,19 @@ func (ps *Set) Get(t Type) (interface{}, error) {
 	for _, v := range ps.byTypeAndID[t] {
 		return v.Instance()
 	}
-	return nil, fmt.Errorf("no plugins registered for %s: %w", t, errdefs.ErrNotFound)
-}
-
-// GetAll returns all initialized plugins
-func (ps *Set) GetAll() []*Plugin {
-	return ps.ordered
-}
-
-// Plugins returns plugin set
-func (i *InitContext) Plugins() *Set {
-	return i.plugins
+	return nil, errors.Wrapf(errdefs.ErrNotFound, "no plugins registered for %s", t)
 }
 
 // GetAll plugins in the set
 func (i *InitContext) GetAll() []*Plugin {
-	return i.plugins.GetAll()
-}
-
-// GetByID returns the plugin of the given type and ID
-func (i *InitContext) GetByID(t Type, id string) (interface{}, error) {
-	ps, err := i.GetByType(t)
-	if err != nil {
-		return nil, err
-	}
-	p, ok := ps[id]
-	if !ok {
-		return nil, fmt.Errorf("no %s plugins with id %s: %w", t, id, errdefs.ErrNotFound)
-	}
-	return p.Instance()
+	return i.plugins.ordered
 }
 
 // GetByType returns all plugins with the specific type.
 func (i *InitContext) GetByType(t Type) (map[string]*Plugin, error) {
 	p, ok := i.plugins.byTypeAndID[t]
 	if !ok {
-		return nil, fmt.Errorf("no plugins registered for %s: %w", t, errdefs.ErrNotFound)
+		return nil, errors.Wrapf(errdefs.ErrNotFound, "no plugins registered for %s", t)
 	}
 
 	return p, nil

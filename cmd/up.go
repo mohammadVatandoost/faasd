@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
 
-	units "github.com/docker/go-units"
 	"github.com/openfaas/faasd/pkg"
 )
 
@@ -69,7 +68,7 @@ func runUp(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	log.Printf("Supervisor created in: %s\n", units.HumanDuration(time.Since(start)))
+	log.Printf("Supervisor created in: %s\n", time.Since(start).String())
 
 	start = time.Now()
 	if err := supervisor.Start(services); err != nil {
@@ -77,13 +76,16 @@ func runUp(cmd *cobra.Command, _ []string) error {
 	}
 	defer supervisor.Close()
 
-	log.Printf("Supervisor init done in: %s\n", units.HumanDuration(time.Since(start)))
+	log.Printf("Supervisor init done in: %s\n", time.Since(start).String())
 
 	shutdownTimeout := time.Second * 1
 	timeout := time.Second * 60
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
+
+	proxies := map[uint32]*pkg.Proxy{}
+
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
@@ -98,6 +100,10 @@ func runUp(cmd *cobra.Command, _ []string) error {
 		}
 
 		// TODO: close proxies
+		for _, v := range proxies {
+			v.Close <- struct{}{}
+		}
+
 		time.AfterFunc(shutdownTimeout, func() {
 			wg.Done()
 		})
@@ -106,10 +112,9 @@ func runUp(cmd *cobra.Command, _ []string) error {
 	localResolver := pkg.NewLocalResolver(path.Join(cfg.workingDir, "hosts"))
 	go localResolver.Start()
 
-	proxies := map[uint32]*pkg.Proxy{}
 	for _, svc := range services {
+		fmt.Println("*** runUp service Name:", svc.Name, ", ports:", svc.Ports)
 		for _, port := range svc.Ports {
-
 			listenPort := port.Port
 			if _, ok := proxies[listenPort]; ok {
 				return fmt.Errorf("port %d already allocated", listenPort)
