@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/openfaas/faasd/internal/cluster"
+	"github.com/openfaas/faasd/internal/multilru"
 	"io"
 	"io/ioutil"
 	"log"
@@ -31,7 +32,7 @@ const (
 	defaultContentType    = "text/plain"
 	MaxCacheItem          = 5
 	MaxAgentFunctionCache = 5
-	UseCache              = false
+
 	UseLoadBalancerCache  = false
 	batchTime             = 50
 	FileCaching           = false
@@ -39,6 +40,7 @@ const (
 	UseTAHC               = false
 	TAHCCacheSize         = 10
 	StoreMetric           = true
+
 )
 
 type Agent struct {
@@ -53,7 +55,6 @@ type CacheCheckingReq struct {
 	agentID    uint32
 }
 
-var ageantLoad []uint
 
 //var Cache *cache.Cache
 var Cache *lru.Cache
@@ -63,29 +64,33 @@ var TAHCCache *lru.Cache
 var mutex sync.Mutex
 var mutexAgent sync.Mutex
 var cacheHit uint
-var resultCacheHit uint
-var batchCacheHit uint
+//var resultCacheHit uint
+//var batchCacheHit uint
 var cacheMiss uint
 var loadMiss uint64
 var totalTime int64
 var hashRequests = make(chan CacheCheckingReq, 100)
+
 var workerCluster *cluster.Cluster
+
 
 // var hashRequestsResult = make(chan CacheChecking, 100)
 
 func initHandler() {
-	log.Printf("UseFunctionCaching: %v, FunctionCachingSize: %v, UseLoadBalancerCache: %v, FileCaching: %v, BatchChecking: %v, batchTime: %v, UseTAHC: %v, TAHCCacheSize: %v",
-		UseCache, MaxCacheItem, UseLoadBalancerCache, FileCaching, BatchChecking, batchTime, UseTAHC, TAHCCacheSize)
+	log.Printf("UseFoCCache: %v, FunctionCachingSize: %v, UseLoadBalancerCache: %v, FileCaching: %v, BatchChecking: %v, batchTime: %v, UseTAHC: %v, TAHCCacheSize: %v, FoCCacheSize: %v",
+		UseFoCCache, MaxCacheItem, UseLoadBalancerCache, FileCaching, BatchChecking, batchTime, UseTAHC, TAHCCacheSize, FoCCacheSize)
 
 	cacheHit = 0
 	cacheMiss = 0
 	loadMiss = 0
-	batchCacheHit = 0
-	resultCacheHit = 0
+	//batchCacheHit = 0
+	//resultCacheHit = 0
 
 	Cache = lru.New(MaxCacheItem)
 	CacheAgent = lru.New(MaxAgentFunctionCache)
 	TAHCCache = lru.New(TAHCCacheSize)
+
+	focCache = multilru.New(FoCCacheSize)
 
 
 	IPAddress := "192.168.2.9"
@@ -129,10 +134,6 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 			http.MethodDelete,
 			http.MethodGet:
 
-			// span := (*tracer.GetTracer().Tracer).StartSpan("Handle_Function")
-			// span.SetTag("event", "Handle_Function")
-			// defer span.Finish()
-			// span.LogKV("event", "println")
 			initialTime := time.Now()
 
 			pathVars := mux.Vars(r)
@@ -161,35 +162,19 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 			}
 
 			//*********** cache  ******************
-			if UseCache {
-				// checkInNodes = hash(append([]byte(functionName), bodyBytes...))
-				mutex.Lock()
-				response, found := Cache.Get(checkInNodes)
-				mutex.Unlock()
-				if found {
-					resTime := time.Since(initialTime).Microseconds()
-					atomic.AddInt64(&totalTime, resTime)
-					fmt.Printf("Function Result acheived, RequestURI: %v, decesionTime: %v us, totalTime: %v \n",
-						functionName, resTime, totalTime)
-					resultCacheHit++
-					log.Printf("Mohammad founded in cache  functionName: %v, resultCacheHit: %v \n",
-						functionName, resultCacheHit)
-					resSize := len(response.([]byte))
-					res, err := unserializeReq(response.([]byte), r)
-					if err != nil {
-						log.Println("Mohammad unserialize res: ", err.Error())
-						httputil.Errorf(w, http.StatusInternalServerError, "Can't unserialize res: %s.", functionName)
-						return
-					}
-
+			if UseFoCCache {
+				res, err := checkFoCCache(checkInNodes, r)
+				if err != nil {
+					log.Println("Mohammad unserialize res: ", err.Error())
+					httputil.Errorf(w, http.StatusInternalServerError, "Can't unserialize res: %s.", functionName)
+					return
+				}
+				if res != nil {
 					clientHeader := w.Header()
 					copyHeaders(clientHeader, &res.Header)
 					w.Header().Set("Content-Type", getContentType(r.Header, res.Header))
-
 					w.WriteHeader(res.StatusCode)
 					io.Copy(w, res.Body)
-					metricDataChan <- Metric{FunctionName: functionName, InputSize: len(bodyBytes),
-						CacheHit: true, ResultSize: resSize, ResponseTime: resTime}
 					return
 				}
 			}
@@ -211,13 +196,11 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 			atomic.AddInt64(&totalTime, resTime)
 			fmt.Printf("Function Result acheived, RequestURI: %v, decesionTime: %v us, totalTime: %v  \n",
 				functionName, decesionTime.Sub(initialTime).Microseconds(), totalTime)
-			//log.Println("Mohammad add to cache sReqHash:", sReqHash)
-			if UseCache {
-				mutex.Lock()
-				Cache.Add(checkInNodes, agentRes.Response)
-				mutex.Unlock()
+
+			if UseFoCCache {
+				focCache.Add(checkInNodes, agentRes.Response)
 			}
-			resSize := len(agentRes.Response)
+			//resSize := len(agentRes.Response)
 			res, err := unserializeReq(agentRes.Response, r)
 			if err != nil {
 				log.Println("Mohammad unserialize res: ", err.Error())
@@ -235,8 +218,8 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 			//w.WriteHeader(http.StatusOK)
 			//_, _ =w.Write(agentRes.Response)
 			//io.Copy(w, r.Response)
-			metricDataChan <- Metric{FunctionName: functionName, InputSize: len(bodyBytes),
-				CacheHit: true, ResultSize: resSize, ResponseTime: resTime}
+			//metricDataChan <- Metric{FunctionName: functionName, InputSize: len(bodyBytes),
+			//	CacheHit: true, ResultSize: resSize, ResponseTime: resTime}
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -247,30 +230,7 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash string, mctx context.Context) (*pb.TaskResponse, error, time.Time) {
 	var agentId uint32
 
-	if UseLoadBalancerCache {
-		// _, _ = opentracing.StartSpanFromContext(mctx, "Cache Schedule")
-		t1 := time.Now()
-		mutexAgent.Lock()
-		value, found := CacheAgent.Get(RequestURI)
-		mutexAgent.Unlock()
-		if found {
-			agentId = value.(uint32)
-			if workerCluster.CheckAgentLoad(int(agentId)) {
-				mutexAgent.Lock()
-				cacheHit++
-				mutexAgent.Unlock()
-				duration := time.Since(t1)
-				log.Printf("sendToAgent due to Cache cacheHit: %v,  RequestURI :%s, duration: %v  \n",
-					cacheHit, RequestURI, duration.Microseconds())
-				endTime := time.Now()
-				res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
-				return res, err, endTime
-			}
-			atomic.AddUint64(&loadMiss, 1)
-		}
-		duration := time.Since(t1)
-		log.Printf("duration: %v \n", duration.Microseconds())
-	} else if UseTAHC {
+	if UseTAHC {
 		t1 := time.Now()
 		mutexAgent.Lock()
 		value, found := TAHCCache.Get(sReqHash)
@@ -296,15 +256,11 @@ func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash st
 
 	agentId = uint32(workerCluster.SelectAgent())
 	mutexAgent.Lock()
-	if UseLoadBalancerCache {
-		CacheAgent.Add(RequestURI, agentId)
-		cacheMiss++
-	} else if UseTAHC {
+	if UseTAHC {
 		TAHCCache.Add(sReqHash, agentId)
 		cacheMiss++
 	}
-	log.Printf("sendToAgent loadMiss: %v, cacheMiss: %v,  RequestURI :%s", loadMiss, cacheMiss,
-		RequestURI)
+	log.Printf("sendToAgent loadMiss: %v, cacheMiss: %v,  RequestURI :%s", loadMiss, cacheMiss, RequestURI)
 	mutexAgent.Unlock()
 	endTime := time.Now()
 	res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
