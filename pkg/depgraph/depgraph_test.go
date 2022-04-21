@@ -16,7 +16,7 @@ func Test_RemoveMedial(t *testing.T) {
 
 	for _, n := range g.nodes {
 		if n.Name == b.Name {
-			t.Fatalf("Found deleted node: %s", n.Name)
+			t.Fatalf("Found deleted cluster: %s", n.Name)
 		}
 	}
 }
@@ -35,7 +35,7 @@ func Test_RemoveFinal(t *testing.T) {
 
 	for _, n := range g.nodes {
 		if n.Name == c.Name {
-			t.Fatalf("Found deleted node: %s", c.Name)
+			t.Fatalf("Found deleted cluster: %s", c.Name)
 		}
 	}
 }

@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.25.0
 // 	protoc        v3.14.0
-// source: agent.proto
+// source: cluster.proto
 
 package agent
 
@@ -222,12 +222,12 @@ func file_agent_proto_rawDescGZIP() []byte {
 
 var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_agent_proto_goTypes = []interface{}{
-	(*TaskRequest)(nil),  // 0: agent.TaskRequest
-	(*TaskResponse)(nil), // 1: agent.TaskResponse
+	(*TaskRequest)(nil),  // 0: cluster.TaskRequest
+	(*TaskResponse)(nil), // 1: cluster.TaskResponse
 }
 var file_agent_proto_depIdxs = []int32{
-	0, // 0: agent.TasksRequest.TaskAssign:input_type -> agent.TaskRequest
-	1, // 1: agent.TasksRequest.TaskAssign:output_type -> agent.TaskResponse
+	0, // 0: cluster.TasksRequest.TaskAssign:input_type -> cluster.TaskRequest
+	1, // 1: cluster.TasksRequest.TaskAssign:output_type -> cluster.TaskResponse
 	1, // [1:2] is the sub-list for method output_type
 	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name

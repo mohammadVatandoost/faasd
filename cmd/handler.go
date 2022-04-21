@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/openfaas/faasd/internal/cluster"
 	"io"
 	"io/ioutil"
 	"log"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"sync"
@@ -19,7 +19,6 @@ import (
 	"github.com/openfaas/faas-provider/httputil"
 	"github.com/openfaas/faas-provider/types"
 	pb "github.com/openfaas/faasd/proto/agent"
-	"google.golang.org/grpc"
 )
 
 type BaseURLResolver interface {
@@ -32,7 +31,6 @@ const (
 	defaultContentType    = "text/plain"
 	MaxCacheItem          = 5
 	MaxAgentFunctionCache = 5
-	MaxClientLoad         = 6
 	UseCache              = false
 	UseLoadBalancerCache  = false
 	batchTime             = 50
@@ -55,7 +53,6 @@ type CacheCheckingReq struct {
 	agentID    uint32
 }
 
-var ageantAddresses []Agent
 var ageantLoad []uint
 
 //var Cache *cache.Cache
@@ -72,6 +69,7 @@ var cacheMiss uint
 var loadMiss uint64
 var totalTime int64
 var hashRequests = make(chan CacheCheckingReq, 100)
+var workerCluster *cluster.Cluster
 
 // var hashRequestsResult = make(chan CacheChecking, 100)
 
@@ -88,16 +86,19 @@ func initHandler() {
 	Cache = lru.New(MaxCacheItem)
 	CacheAgent = lru.New(MaxAgentFunctionCache)
 	TAHCCache = lru.New(TAHCCacheSize)
+
+
 	IPAddress := "192.168.2.9"
-	localAddress := "127.0.0.1"
- 	ageantAddresses = append(ageantAddresses, Agent{Id: 0, Address: IPAddress+":50061"})
-	ageantAddresses = append(ageantAddresses, Agent{Id: 1, Address: IPAddress+":50062"})
-	ageantAddresses = append(ageantAddresses, Agent{Id: 2, Address: IPAddress+":50063"})
-	ageantAddresses = append(ageantAddresses, Agent{Id: 3, Address: IPAddress+":50064"})
-	ageantAddresses = append(ageantAddresses, Agent{Id: 0, Address: localAddress+":50061"})
-	ageantAddresses = append(ageantAddresses, Agent{Id: 1, Address: localAddress+":50062"})
-	ageantAddresses = append(ageantAddresses, Agent{Id: 2, Address: localAddress+":50063"})
-	ageantAddresses = append(ageantAddresses, Agent{Id: 3, Address: localAddress+":50064"})
+	//localAddress := "127.0.0.1"
+	workerCluster = cluster.NewCluster()
+	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: IPAddress+":50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 3, Address: IPAddress+":50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 4, Address: IPAddress+":50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
 
 	if BatchChecking {
 		go checkAllNodesCache()
@@ -245,53 +246,6 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 
 func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash string, mctx context.Context) (*pb.TaskResponse, error, time.Time) {
 	var agentId uint32
-	if BatchChecking {
-		start := time.Now()
-		resChan := make(chan pb.TaskResponse, 4)
-		hashRequests <- CacheCheckingReq{sReqHash: sReqHash, resultChan: resChan}
-		stopWaitting := false
-		totalCaches := len(ageantAddresses)
-		for {
-			select {
-			case res := <-resChan:
-				totalCaches--
-				if len(res.Response) > 0 {
-					batchCacheHit++
-					if FileCaching {
-						mutexAgent.Lock()
-						agentId = uint32(res.Response[0])
-						if ageantAddresses[agentId].Loads < MaxClientLoad {
-							fmt.Printf("founded data in cache, RequestURI: %v, agentId: %v, batchCacheHit: %v \n",
-								RequestURI, agentId, batchCacheHit)
-							ageantAddresses[agentId].Loads++
-							mutexAgent.Unlock()
-							endTime := time.Now()
-							res, err := sendToAgent(ageantAddresses[agentId].Address, RequestURI, exteraPath, sReq, agentId, true, mctx)
-							return res, err, endTime
-						}
-						mutexAgent.Unlock()
-						fmt.Printf("founded data in cache, but node is overloaded RequestURI: %v, agentId: %v, batchCacheHit: %v \n",
-							RequestURI, agentId, batchCacheHit)
-					} else {
-						fmt.Printf("founded response in cache, RequestURI: %v, len(res.Response): %v, batchCacheHit: %v \n",
-							RequestURI, len(res.Response), batchCacheHit)
-						endTime := time.Now()
-						return &res, nil, endTime
-					}
-				}
-				if totalCaches == 0 {
-					stopWaitting = true
-				}
-			default:
-			}
-			if stopWaitting {
-				break
-			}
-			time.Sleep(1 * time.Millisecond)
-		}
-		seconds := time.Since(start)
-		fmt.Printf("do not find in cache, this takes: %v, batchCacheHit: %v \n", seconds.Seconds(), batchCacheHit)
-	}
 
 	if UseLoadBalancerCache {
 		// _, _ = opentracing.StartSpanFromContext(mctx, "Cache Schedule")
@@ -301,16 +255,15 @@ func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash st
 		mutexAgent.Unlock()
 		if found {
 			agentId = value.(uint32)
-			if ageantAddresses[agentId].Loads < MaxClientLoad {
+			if workerCluster.CheckAgentLoad(int(agentId)) {
 				mutexAgent.Lock()
-				ageantAddresses[agentId].Loads++
 				cacheHit++
 				mutexAgent.Unlock()
 				duration := time.Since(t1)
-				log.Printf("sendToAgent due to Cache cacheHit: %v, address: %v,  RequestURI :%s, duration: %v  \n",
-					cacheHit, ageantAddresses[agentId].Address, RequestURI, duration.Microseconds())
+				log.Printf("sendToAgent due to Cache cacheHit: %v,  RequestURI :%s, duration: %v  \n",
+					cacheHit, RequestURI, duration.Microseconds())
 				endTime := time.Now()
-				res, err := sendToAgent(ageantAddresses[agentId].Address, RequestURI, exteraPath, sReq, agentId, true, mctx)
+				res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
 				return res, err, endTime
 			}
 			atomic.AddUint64(&loadMiss, 1)
@@ -324,16 +277,15 @@ func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash st
 		mutexAgent.Unlock()
 		if found {
 			agentId = value.(uint32)
-			if ageantAddresses[agentId].Loads < MaxClientLoad {
+			if workerCluster.CheckAgentLoad(int(agentId)){
 				mutexAgent.Lock()
-				ageantAddresses[agentId].Loads++
 				cacheHit++
 				mutexAgent.Unlock()
 				duration := time.Since(t1)
-				log.Printf("UseTAHC sendToAgent due to Cache cacheHit: %v, address: %v,  RequestURI :%s, duration: %v  \n",
-					cacheHit, ageantAddresses[agentId].Address, RequestURI, duration.Microseconds())
+				log.Printf("UseTAHC sendToAgent due to Cache cacheHit: %v, RequestURI :%s, duration: %v  \n",
+					cacheHit, RequestURI, duration.Microseconds())
 				endTime := time.Now()
-				res, err := sendToAgent(ageantAddresses[agentId].Address, RequestURI, exteraPath, sReq, agentId, true, mctx)
+				res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
 				return res, err, endTime
 			}
 			atomic.AddUint64(&loadMiss, 1)
@@ -342,13 +294,8 @@ func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash st
 		log.Printf("duration: %v \n", duration.Microseconds())
 	}
 
+	agentId = uint32(workerCluster.SelectAgent())
 	mutexAgent.Lock()
-	for i := 0; i < len(ageantAddresses); i++ {
-		agentId = uint32(rand.Int31n(int32(len(ageantAddresses))))
-		if ageantAddresses[agentId].Loads < MaxClientLoad {
-			break
-		}
-	}
 	if UseLoadBalancerCache {
 		CacheAgent.Add(RequestURI, agentId)
 		cacheMiss++
@@ -356,46 +303,11 @@ func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash st
 		TAHCCache.Add(sReqHash, agentId)
 		cacheMiss++
 	}
-	ageantAddresses[agentId].Loads++
-	log.Printf("sendToAgent loadMiss: %v, cacheMiss: %v, address: %v,  RequestURI :%s", loadMiss, cacheMiss,
-		ageantAddresses[agentId].Address, RequestURI)
+	log.Printf("sendToAgent loadMiss: %v, cacheMiss: %v,  RequestURI :%s", loadMiss, cacheMiss,
+		RequestURI)
 	mutexAgent.Unlock()
 	endTime := time.Now()
-	res, err := sendToAgent(ageantAddresses[agentId].Address, RequestURI, exteraPath, sReq, agentId, false, mctx)
+	res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
 	return res, err, endTime
 }
 
-func sendToAgent(address string, RequestURI string, exteraPath string, sReq []byte, agentId uint32, cacheHit bool, mctx context.Context) (*pb.TaskResponse, error) {
-	// log.Printf("sendToAgent address: %v,  RequestURI :%s", address, RequestURI)
-	// _, _ = opentracing.StartSpanFromContext(mctx, "SendToNode")
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
-	if err != nil {
-		log.Printf("did not connect: %v", err)
-		mutexAgent.Lock()
-		ageantAddresses[agentId].Loads--
-		mutexAgent.Unlock()
-		return nil, err
-	}
-	defer conn.Close()
-	c := pb.NewTasksRequestClient(conn)
-
-	// Contact the server and print out its response.
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	r, err := c.TaskAssign(ctx, &pb.TaskRequest{FunctionName: RequestURI, ExteraPath: exteraPath, SerializeReq: sReq,
-		TimeNanoSecond: time.Now().UnixNano(), CacheHit: cacheHit})
-	if err != nil {
-		log.Printf("could not TaskAssign: %v", err)
-		mutexAgent.Lock()
-		ageantAddresses[agentId].Loads--
-		mutexAgent.Unlock()
-		return nil, err
-	}
-	// log.Printf("Response Message: %s", r.Message)
-	mutexAgent.Lock()
-	ageantAddresses[agentId].Loads--
-	mutexAgent.Unlock()
-	return r, err
-
-}

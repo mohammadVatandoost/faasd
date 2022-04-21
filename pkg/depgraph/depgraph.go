@@ -2,7 +2,7 @@ package depgraph
 
 import "log"
 
-// Node represents a node in a Graph with
+// Node represents a cluster in a Graph with
 // 0 to many edges
 type Node struct {
 	Name  string
@@ -58,7 +58,7 @@ func (g *Graph) Remove(target *Node) {
 	}
 }
 
-// Resolve retruns a list of node names in order of their dependencies.
+// Resolve retruns a list of cluster names in order of their dependencies.
 // A use case may be for determining the correct order to install
 // software packages, or to start services.
 // Based upon the algorithm described by Ferry Boender in the following article
@@ -80,7 +80,7 @@ func (g *Graph) Resolve() []string {
 }
 
 // resolve mutates the resolved graph for a given starting
-// node. The unresolved graph is used to detect a circular graph
+// cluster. The unresolved graph is used to detect a circular graph
 // error and will throw a panic. This can be caught with a resolve
 // in a go routine.
 func resolve(node *Node, resolved, unresolved *Graph) {
