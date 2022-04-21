@@ -1,4 +1,4 @@
-package multilru
+package lru
 
 import (
 	"bytes"

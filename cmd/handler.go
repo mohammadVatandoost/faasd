@@ -2,10 +2,9 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"github.com/openfaas/faasd/internal/cluster"
-	"github.com/openfaas/faasd/internal/multilru"
+	"github.com/openfaas/faasd/internal/lru"
 	"io"
 	"io/ioutil"
 	"log"
@@ -15,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/golang/groupcache/lru"
 	"github.com/gorilla/mux"
 	"github.com/openfaas/faas-provider/httputil"
 	"github.com/openfaas/faas-provider/types"
@@ -37,8 +35,6 @@ const (
 	batchTime             = 50
 	FileCaching           = false
 	BatchChecking         = false
-	UseTAHC               = false
-	TAHCCacheSize         = 10
 	StoreMetric           = true
 
 )
@@ -57,11 +53,10 @@ type CacheCheckingReq struct {
 
 
 //var Cache *cache.Cache
-var Cache *lru.Cache
-var CacheAgent *lru.Cache
-var TAHCCache *lru.Cache
+//var Cache *lru.Cache
+//var CacheAgent *lru.Cache
 
-var mutex sync.Mutex
+//var mutex sync.Mutex
 var mutexAgent sync.Mutex
 var cacheHit uint
 //var resultCacheHit uint
@@ -86,12 +81,9 @@ func initHandler() {
 	//batchCacheHit = 0
 	//resultCacheHit = 0
 
-	Cache = lru.New(MaxCacheItem)
-	CacheAgent = lru.New(MaxAgentFunctionCache)
+
+	focCache  = lru.New(FoCCacheSize)
 	TAHCCache = lru.New(TAHCCacheSize)
-
-	focCache = multilru.New(FoCCacheSize)
-
 
 	IPAddress := "192.168.2.9"
 	//localAddress := "127.0.0.1"
@@ -105,13 +97,13 @@ func initHandler() {
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
 
-	if BatchChecking {
-		go checkAllNodesCache()
-	}
-
-	if StoreMetric {
-		go storeMetric() 
-	}
+	//if BatchChecking {
+	//	go checkAllNodesCache()
+	//}
+	//
+	//if StoreMetric {
+	//	go storeMetric()
+	//}
 }
 
 func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.HandlerFunc {
@@ -119,8 +111,6 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 	if resolver == nil {
 		panic("NewHandlerFunc: empty proxy handler resolver, cannot be nil")
 	}
-
-	//proxyClient := proxy.NewProxyClientFromConfig(config)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
@@ -187,7 +177,7 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 
 			//proxy.ProxyRequest(w, r, proxyClient, resolver)
 			// mctx := opentracing.ContextWithSpan(context.Background(), span)
-			agentRes, err, decesionTime := loadBalancer(functionName, exteraPath, sReq, checkInNodes, nil)
+			agentRes, err, decesionTime := loadBalancer(functionName, exteraPath, sReq, checkInNodes)
 			if err != nil {
 				httputil.Errorf(w, http.StatusInternalServerError, "Can't reach service for: %s.", functionName)
 				return
@@ -214,56 +204,11 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 
 			w.WriteHeader(res.StatusCode)
 			io.Copy(w, res.Body)
-			// span.LogKV("outputs", "test")
-			//w.WriteHeader(http.StatusOK)
-			//_, _ =w.Write(agentRes.Response)
-			//io.Copy(w, r.Response)
-			//metricDataChan <- Metric{FunctionName: functionName, InputSize: len(bodyBytes),
-			//	CacheHit: true, ResultSize: resSize, ResponseTime: resTime}
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	}
-	//return proxy.NewHandlerFunc(config, resolver)
 }
 
-func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash string, mctx context.Context) (*pb.TaskResponse, error, time.Time) {
-	var agentId uint32
 
-	if UseTAHC {
-		t1 := time.Now()
-		mutexAgent.Lock()
-		value, found := TAHCCache.Get(sReqHash)
-		mutexAgent.Unlock()
-		if found {
-			agentId = value.(uint32)
-			if workerCluster.CheckAgentLoad(int(agentId)){
-				mutexAgent.Lock()
-				cacheHit++
-				mutexAgent.Unlock()
-				duration := time.Since(t1)
-				log.Printf("UseTAHC sendToAgent due to Cache cacheHit: %v, RequestURI :%s, duration: %v  \n",
-					cacheHit, RequestURI, duration.Microseconds())
-				endTime := time.Now()
-				res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
-				return res, err, endTime
-			}
-			atomic.AddUint64(&loadMiss, 1)
-		}
-		duration := time.Since(t1)
-		log.Printf("duration: %v \n", duration.Microseconds())
-	}
-
-	agentId = uint32(workerCluster.SelectAgent())
-	mutexAgent.Lock()
-	if UseTAHC {
-		TAHCCache.Add(sReqHash, agentId)
-		cacheMiss++
-	}
-	log.Printf("sendToAgent loadMiss: %v, cacheMiss: %v,  RequestURI :%s", loadMiss, cacheMiss, RequestURI)
-	mutexAgent.Unlock()
-	endTime := time.Now()
-	res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
-	return res, err, endTime
-}
 

@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/openfaas/faasd/internal/multilru"
+	"github.com/openfaas/faasd/internal/lru"
 	"log"
 	"net/http"
 )
@@ -11,7 +11,7 @@ const (
 	FoCCacheSize             = 1000*1024*1024
 )
 
-var focCache *multilru.Cache
+var focCache *lru.Cache
 
 func checkFoCCache(hashReq string, r *http.Request) (*http.Response, error) {
 	response, found := focCache.Get(hashReq)
