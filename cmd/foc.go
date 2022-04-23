@@ -13,8 +13,8 @@ const (
 
 var focCache *lru.Cache
 
-func checkFoCCache(hashReq string, r *http.Request) (*http.Response, error) {
-	response, found := focCache.Get(hashReq)
+func checkFoCCache(cache *lru.Cache, hashReq string, r *http.Request) (*http.Response, error) {
+	response, found := cache.Get(hashReq)
 	if found {
 		res, err := unserializeReq(response.([]byte), r)
 		if err != nil {

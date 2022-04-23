@@ -1,20 +1,29 @@
 package cmd
 
 import (
-	pb "github.com/openfaas/faasd/proto/agent"
 	"log"
-	"time"
+	"net/http"
 )
 
-func loadBalancer(RequestURI string, exteraPath string, sReq []byte, sReqHash string) (*pb.TaskResponse, error, time.Time) {
+func loadBalancer(RequestURI string, exteraPath string, r *http.Request, sReqHash string) ([]byte, error) {
 	var agentId uint32
+	if UseMDPCache {
+		return mdpLoadBalance(RequestURI, sReqHash, exteraPath, r)
+	}
+	sReq, err := captureRequestData(r)
+	if err != nil {
+		return nil, err
+	}
+
 	if UseTAHC {
 		agentId = tahcLoadBalance(RequestURI, sReqHash)
 	}
 
 	log.Printf("sendToAgent loadMiss: %v, cacheMiss: %v,  RequestURI :%s, cacheHit: %v",
 		loadMiss, cacheMiss, RequestURI, cacheHit)
-	endTime := time.Now()
 	res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
-	return res, err, endTime
+	if err != nil {
+		return nil, err
+	}
+	return res.Response, nil
 }

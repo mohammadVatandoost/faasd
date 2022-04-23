@@ -3,8 +3,6 @@ package cmd
 import (
 	"bytes"
 	"fmt"
-	"github.com/openfaas/faasd/internal/cluster"
-	"github.com/openfaas/faasd/internal/lru"
 	"io"
 	"io/ioutil"
 	"log"
@@ -17,6 +15,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/openfaas/faas-provider/httputil"
 	"github.com/openfaas/faas-provider/types"
+	"github.com/openfaas/faasd/internal/cluster"
+	"github.com/openfaas/faasd/internal/lru"
 	pb "github.com/openfaas/faasd/proto/agent"
 )
 
@@ -35,7 +35,7 @@ const (
 	batchTime            = 50
 	FileCaching          = false
 	BatchChecking        = false
-	StoreMetric          = true
+	StoreMetric          = false
 )
 
 type Agent struct {
@@ -67,6 +67,8 @@ var hashRequests = make(chan CacheCheckingReq, 100)
 
 var workerCluster *cluster.Cluster
 
+//var markovDecisionProcess *mdp.MarkovDecisionProcess
+
 // var hashRequestsResult = make(chan CacheChecking, 100)
 
 func initHandler() {
@@ -78,9 +80,14 @@ func initHandler() {
 	loadMiss = 0
 	//batchCacheHit = 0
 	//resultCacheHit = 0
-
-	focCache = lru.New(FoCCacheSize)
-	TAHCCache = lru.New(TAHCCacheSize)
+	if UseFoCCache {
+		focCache = lru.New(FoCCacheSize)
+	} else if UseTAHC {
+		TAHCCache = lru.New(TAHCCacheSize)
+	} else {
+		// mdp do not need initialization
+		multiLRU = lru.NewMultiCache(MUFoCCacheSize, MUTAHCCacheSize)
+	}
 
 	IPAddress := "192.168.2.9"
 	//localAddress := "127.0.0.1"
@@ -150,7 +157,7 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 
 			//*********** cache  ******************
 			if UseFoCCache {
-				res, err := checkFoCCache(checkInNodes, r)
+				res, err := checkFoCCache(focCache, checkInNodes, r)
 				if err != nil {
 					log.Println("Mohammad unserialize res: ", err.Error())
 					httputil.Errorf(w, http.StatusInternalServerError, "Can't unserialize res: %s.", functionName)
@@ -166,15 +173,15 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 				}
 			}
 
-			sReq, err := captureRequestData(r)
-			if err != nil {
-				httputil.Errorf(w, http.StatusInternalServerError, "Can't captureRequestData for: %s.", functionName)
-				return
-			}
+			//sReq, err := captureRequestData(r)
+			//if err != nil {
+			//	httputil.Errorf(w, http.StatusInternalServerError, "Can't captureRequestData for: %s.", functionName)
+			//	return
+			//}
 
 			//proxy.ProxyRequest(w, r, proxyClient, resolver)
 			// mctx := opentracing.ContextWithSpan(context.Background(), span)
-			agentRes, err, decesionTime := loadBalancer(functionName, exteraPath, sReq, checkInNodes)
+			response, err := loadBalancer(functionName, exteraPath, r, checkInNodes)
 			if err != nil {
 				httputil.Errorf(w, http.StatusInternalServerError, "Can't reach service for: %s.", functionName)
 				return
@@ -182,13 +189,13 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 			resTime := time.Since(initialTime).Microseconds()
 			atomic.AddInt64(&totalTime, resTime)
 			fmt.Printf("Function Result acheived, RequestURI: %v, decesionTime: %v us, totalTime: %v  \n",
-				functionName, decesionTime.Sub(initialTime).Microseconds(), totalTime)
+				functionName, time.Now().Sub(initialTime).Microseconds(), totalTime)
 
 			if UseFoCCache {
-				focCache.Add(checkInNodes, agentRes.Response)
+				focCache.Add(checkInNodes, response)
 			}
 			//resSize := len(agentRes.Response)
-			res, err := unserializeReq(agentRes.Response, r)
+			res, err := unserializeReq(response, r)
 			if err != nil {
 				log.Println("Mohammad unserialize res: ", err.Error())
 				httputil.Errorf(w, http.StatusInternalServerError, "Can't unserialize res: %s.", functionName)

@@ -1,5 +1,7 @@
 package mdp
 
+type StateUpdate func(uint, uint) (uint, uint, uint)
+
 type MarkovDecisionProcess struct {
 	States              []string
 	currentState        int
@@ -9,6 +11,10 @@ type MarkovDecisionProcess struct {
 	inputCounter        int
 	totalInputEachStep  []int
 	uniqueInputEachStep []int
+	notifyStateUpdate   StateUpdate
+	nFoC                uint
+	nTAHC               uint
+	nNoCache            uint
 }
 
 const (
@@ -40,12 +46,17 @@ func (mdp *MarkovDecisionProcess) AddFunctionInput(rHash string) {
 	}
 }
 
-func New(states []string, currentState int, actions [][]float32) *MarkovDecisionProcess {
+func New(states []string, currentState int, actions [][]float32, fn StateUpdate, nFoC uint,
+	nTAHC uint, nNoCache uint) *MarkovDecisionProcess {
 	return &MarkovDecisionProcess{
 		States:             states,
 		currentState:       currentState,
 		actions:            actions,
 		uniqueInputCounter: make(map[string]int),
 		inputCounter:       0,
+		notifyStateUpdate:  fn,
+		nFoC:               nFoC,
+		nTAHC:              nTAHC,
+		nNoCache:           nNoCache,
 	}
 }
