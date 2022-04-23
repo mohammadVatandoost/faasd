@@ -1,18 +1,18 @@
 package mdp
 
 type MarkovDecisionProcess struct {
-	States []string
-	currentState int
-    actions [][]float32
-	FunctionName string
-	uniqueInputCounter map[string]int
-	inputCounter int
-	totalInputEachStep []int
+	States              []string
+	currentState        int
+	actions             [][]float32
+	FunctionName        string
+	uniqueInputCounter  map[string]int
+	inputCounter        int
+	totalInputEachStep  []int
 	uniqueInputEachStep []int
 }
 
 const (
-	WindowSize = 10
+	WindowSize     = 10
 	NumberOfWindow = 3
 )
 
@@ -25,8 +25,8 @@ func (mdp *MarkovDecisionProcess) NextState() int {
 //	mdp.actions[state] = action
 //}
 
-func (mdp *MarkovDecisionProcess) AddFunctionInput(rHash string)  {
-	mdp.uniqueInputCounter[rHash] = mdp.uniqueInputCounter[rHash]+1
+func (mdp *MarkovDecisionProcess) AddFunctionInput(rHash string) {
+	mdp.uniqueInputCounter[rHash] = mdp.uniqueInputCounter[rHash] + 1
 	mdp.inputCounter = mdp.inputCounter + 1
 	if mdp.inputCounter == WindowSize {
 		mdp.totalInputEachStep = append(mdp.totalInputEachStep, mdp.inputCounter)
@@ -40,16 +40,12 @@ func (mdp *MarkovDecisionProcess) AddFunctionInput(rHash string)  {
 	}
 }
 
-
-
 func New(states []string, currentState int, actions [][]float32) *MarkovDecisionProcess {
 	return &MarkovDecisionProcess{
-		States: states,
-		currentState: currentState,
-		actions: actions,
+		States:             states,
+		currentState:       currentState,
+		actions:            actions,
 		uniqueInputCounter: make(map[string]int),
-		inputCounter: 0,
+		inputCounter:       0,
 	}
 }
-
-

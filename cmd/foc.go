@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	UseFoCCache              = false
-	FoCCacheSize             = 1000*1024*1024
+	UseFoCCache  = false
+	FoCCacheSize = 1000 * 1024 * 1024
 )
 
 var focCache *lru.Cache

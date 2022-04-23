@@ -14,4 +14,3 @@ func getRealSizeOf(v interface{}) (int, error) {
 	}
 	return b.Len(), nil
 }
-

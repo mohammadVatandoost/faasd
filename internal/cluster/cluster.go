@@ -13,17 +13,17 @@ import (
 const MaxClientLoad = 6
 
 type Cluster struct {
-	agents  []Agent
-	mutex sync.Mutex
+	agents []Agent
+	mutex  sync.Mutex
 }
 
-func (c *Cluster) AddAgent(agent Agent)  {
+func (c *Cluster) AddAgent(agent Agent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.agents = append(c.agents, agent)
 }
 
-func (c *Cluster) AddAgentLoad(Id int)  {
+func (c *Cluster) AddAgentLoad(Id int) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.agents[Id].Loads++
@@ -39,7 +39,7 @@ func (c *Cluster) CheckAgentLoad(Id int) bool {
 	return false
 }
 
-func (c *Cluster) decreaseAgentLoad(Id int)  {
+func (c *Cluster) decreaseAgentLoad(Id int) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.agents[Id].Loads--
@@ -85,5 +85,3 @@ func (c *Cluster) SendToAgent(Id int, RequestURI string, exteraPath string, sReq
 	return r, nil
 
 }
-
-

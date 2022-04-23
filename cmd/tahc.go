@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	UseTAHC               = false
-	TAHCCacheSize         = 1*1024*1024
+	UseTAHC       = false
+	TAHCCacheSize = 1 * 1024 * 1024
 )
 
 var TAHCCache *lru.Cache
@@ -20,7 +20,7 @@ func tahcLoadBalance(RequestURI string, sReqHash string) uint32 {
 	value, found := TAHCCache.Get(sReqHash)
 	if found {
 		agentId = value.(uint32)
-		if workerCluster.CheckAgentLoad(int(agentId)){
+		if workerCluster.CheckAgentLoad(int(agentId)) {
 			mutexAgent.Lock()
 			cacheHit++
 			mutexAgent.Unlock()

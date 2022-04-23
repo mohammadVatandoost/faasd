@@ -31,12 +31,11 @@ const (
 	MaxCacheItem          = 5
 	MaxAgentFunctionCache = 5
 
-	UseLoadBalancerCache  = false
-	batchTime             = 50
-	FileCaching           = false
-	BatchChecking         = false
-	StoreMetric           = true
-
+	UseLoadBalancerCache = false
+	batchTime            = 50
+	FileCaching          = false
+	BatchChecking        = false
+	StoreMetric          = true
 )
 
 type Agent struct {
@@ -51,7 +50,6 @@ type CacheCheckingReq struct {
 	agentID    uint32
 }
 
-
 //var Cache *cache.Cache
 //var Cache *lru.Cache
 //var CacheAgent *lru.Cache
@@ -59,6 +57,7 @@ type CacheCheckingReq struct {
 //var mutex sync.Mutex
 var mutexAgent sync.Mutex
 var cacheHit uint
+
 //var resultCacheHit uint
 //var batchCacheHit uint
 var cacheMiss uint
@@ -67,7 +66,6 @@ var totalTime int64
 var hashRequests = make(chan CacheCheckingReq, 100)
 
 var workerCluster *cluster.Cluster
-
 
 // var hashRequestsResult = make(chan CacheChecking, 100)
 
@@ -81,17 +79,16 @@ func initHandler() {
 	//batchCacheHit = 0
 	//resultCacheHit = 0
 
-
-	focCache  = lru.New(FoCCacheSize)
+	focCache = lru.New(FoCCacheSize)
 	TAHCCache = lru.New(TAHCCacheSize)
 
 	IPAddress := "192.168.2.9"
 	//localAddress := "127.0.0.1"
 	workerCluster = cluster.NewCluster()
-	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: IPAddress+":50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 3, Address: IPAddress+":50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 4, Address: IPAddress+":50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress + ":50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: IPAddress + ":50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 3, Address: IPAddress + ":50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 4, Address: IPAddress + ":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
@@ -209,6 +206,3 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 		}
 	}
 }
-
-
-

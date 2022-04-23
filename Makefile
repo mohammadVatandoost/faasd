@@ -7,6 +7,8 @@ ARCH := amd64
 
 export GO111MODULE=on
 
+SRCS = $(patsubst ./%,%,$(shell find . -name "*.go" -not -path "*vendor*" -not -path "*.pb.go"))
+
 .PHONY: all
 all: test dist hashgen
 
@@ -64,5 +66,7 @@ test-e2e:
 	sleep 3
 	journalctl -t openfaas-fn:figlet --no-pager
 
+fmt: ## to run `go fmt` on all source code
+	gofmt -s -w $(SRCS)
 # Removed due to timing issue in CI on GitHub Actions
 #	/usr/local/bin/faas-cli logs figlet --since 15m --follow=false | grep Forking

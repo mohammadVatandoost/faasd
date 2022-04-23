@@ -7,17 +7,17 @@ import (
 	"strconv"
 )
 
-type Metric struct{
+type Metric struct {
 	FunctionName string
 	ResponseTime int64
-	InputSize int
+	InputSize    int
 	ResultSize   int
-	CacheHit	 bool 	 
+	CacheHit     bool
 }
 
 var metricDataChan = make(chan Metric, 1000)
 
-func storeMetric()  {
+func storeMetric() {
 	csvfile, err := os.Create("benchmark_typical.csv")
 	if err != nil {
 		log.Fatalf("failed creating file: %s", err)
@@ -38,4 +38,3 @@ func storeMetric()  {
 	}
 	csvfile.Close()
 }
-

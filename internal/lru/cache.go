@@ -9,15 +9,15 @@ import (
 type Cache struct {
 	// MaxSize is the maximum number of all entries size to byte
 	MaxSize int64
-    // total size of all entries to byte
-	Size 	int64
+	// total size of all entries to byte
+	Size int64
 	// OnEvicted optionally specifies a callback function to be
 	// executed when an entry is purged from the cache.
 	OnEvicted func(key Key, value interface{})
 
 	ll    *list.List
 	cache map[interface{}]*list.Element
-    mutex sync.Mutex
+	mutex sync.Mutex
 }
 
 // A Key may be any value that is comparable. See http://golang.org/ref/spec#Comparison_operators
@@ -26,9 +26,8 @@ type Key interface{}
 type entry struct {
 	key   Key
 	value interface{}
-	size int
+	size  int
 }
-
 
 // Add adds a value to the cache.
 func (c *Cache) Add(key Key, value interface{}) {
@@ -138,4 +137,3 @@ func (c *Cache) Clear() {
 	c.ll = nil
 	c.cache = nil
 }
-
