@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"github.com/openfaas/faasd/internal/mdp"
 	"io"
 	"io/ioutil"
 	"log"
@@ -72,8 +73,8 @@ var workerCluster *cluster.Cluster
 // var hashRequestsResult = make(chan CacheChecking, 100)
 
 func initHandler() {
-	log.Printf("UseFoCCache: %v, FunctionCachingSize: %v, UseLoadBalancerCache: %v, FileCaching: %v, BatchChecking: %v, batchTime: %v, UseTAHC: %v, TAHCCacheSize: %v, FoCCacheSize: %v",
-		UseFoCCache, MaxCacheItem, UseLoadBalancerCache, FileCaching, BatchChecking, batchTime, UseTAHC, TAHCCacheSize, FoCCacheSize)
+	log.Printf("UseMDPCache: %v, UseFoCCache: %v, FunctionCachingSize: %v, UseLoadBalancerCache: %v, FileCaching: %v, \n BatchChecking: %v, batchTime: %v, UseTAHC: %v, TAHCCacheSize: %v, FoCCacheSize: %v, MDPWindowSize: %v \n",
+		UseMDPCache, UseFoCCache, MaxCacheItem, UseLoadBalancerCache, FileCaching, BatchChecking, batchTime, UseTAHC, TAHCCacheSize, FoCCacheSize, mdp.WindowSize)
 
 	cacheHit = 0
 	cacheMiss = 0
@@ -84,18 +85,24 @@ func initHandler() {
 		focCache = lru.New(FoCCacheSize)
 	} else if UseTAHC {
 		TAHCCache = lru.New(TAHCCacheSize)
-	} else {
+	} else if UseMDPCache {
 		// mdp do not need initialization
 		multiLRU = lru.NewMultiCache(MUFoCCacheSize, MUTAHCCacheSize)
 	}
 
-	IPAddress := "192.168.2.9"
+	//IPAddress := "192.168.2.9"
 	//localAddress := "127.0.0.1"
 	workerCluster = cluster.NewCluster()
-	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress + ":50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: IPAddress + ":50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 3, Address: IPAddress + ":50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 4, Address: IPAddress + ":50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: "127.0.0.1:50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 1, Address: "127.0.0.1:50062", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: "10.64.144.223:50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: "10.64.144.93:50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: "10.64.144.79:50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: "10.64.144.228:50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress + ":50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 1, Address: IPAddress + ":50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 3, Address: IPAddress + ":50061", Loads: 0})
+	//workerCluster.AddAgent(cluster.Agent{Id: 4, Address: IPAddress + ":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress+":50061", Loads: 0})

@@ -30,7 +30,7 @@ func NewTasksRequestClient(cc grpc.ClientConnInterface) TasksRequestClient {
 
 func (c *tasksRequestClient) TaskAssign(ctx context.Context, in *TaskRequest, opts ...grpc.CallOption) (*TaskResponse, error) {
 	out := new(TaskResponse)
-	err := c.cc.Invoke(ctx, "/cluster.TasksRequest/TaskAssign", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/agent.TasksRequest/TaskAssign", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func _TasksRequest_TaskAssign_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/cluster.TasksRequest/TaskAssign",
+		FullMethod: "/agent.TasksRequest/TaskAssign",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TasksRequestServer).TaskAssign(ctx, req.(*TaskRequest))
@@ -84,7 +84,7 @@ func _TasksRequest_TaskAssign_Handler(srv interface{}, ctx context.Context, dec 
 }
 
 var _TasksRequest_serviceDesc = grpc.ServiceDesc{
-	ServiceName: "cluster.TasksRequest",
+	ServiceName: "agent.TasksRequest",
 	HandlerType: (*TasksRequestServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -93,5 +93,5 @@ var _TasksRequest_serviceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "cluster.proto",
+	Metadata: "agent.proto",
 }

@@ -79,7 +79,7 @@ func (c *Cluster) SendToAgent(Id int, RequestURI string, exteraPath string, sReq
 		ExteraPath: exteraPath, SerializeReq: sReq,
 		TimeNanoSecond: time.Now().UnixNano(), CacheHit: cacheHit})
 	if err != nil {
-		log.Printf("could not TaskAssign: %v", err)
+		log.Printf("could not TaskAssign: %v", err.Error())
 		return nil, err
 	}
 	return r, nil

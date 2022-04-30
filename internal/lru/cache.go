@@ -55,7 +55,6 @@ func (c *Cache) Add(key Key, value interface{}) {
 				break
 			}
 		}
-
 	}
 }
 

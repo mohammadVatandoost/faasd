@@ -17,6 +17,8 @@ func loadBalancer(RequestURI string, exteraPath string, r *http.Request, sReqHas
 
 	if UseTAHC {
 		agentId = tahcLoadBalance(RequestURI, sReqHash)
+	} else {
+		agentId = uint32(workerCluster.SelectAgent())
 	}
 
 	log.Printf("sendToAgent loadMiss: %v, cacheMiss: %v,  RequestURI :%s, cacheHit: %v",

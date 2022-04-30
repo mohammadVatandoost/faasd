@@ -1,6 +1,8 @@
 package mdp
 
-type StateUpdate func(uint, uint) (uint, uint, uint)
+import "fmt"
+
+type StateUpdate func(int, int) (uint, uint, uint)
 
 type MarkovDecisionProcess struct {
 	States              []string
@@ -18,13 +20,22 @@ type MarkovDecisionProcess struct {
 }
 
 const (
-	WindowSize     = 10
+	WindowSize     = 15
 	NumberOfWindow = 3
 )
 
-func (mdp *MarkovDecisionProcess) NextState() int {
-	mdp.currentState = sample(mdp.actions[mdp.currentState])
+func (mdp *MarkovDecisionProcess) CurrentState() int {
 	return mdp.currentState
+}
+
+func (mdp *MarkovDecisionProcess) nextState() {
+	nextState := sample(mdp.actions[mdp.currentState])
+	if mdp.currentState != nextState {
+		mdp.nFoC, mdp.nTAHC, mdp.nNoCache = mdp.notifyStateUpdate(mdp.currentState, nextState)
+	}
+	fmt.Printf("mdp function name: %v, nextState: %v, currentState: %v, actions: %v \n",
+		mdp.FunctionName, nextState, mdp.currentState, mdp.actions)
+	mdp.currentState = nextState
 }
 
 //func (mdp *MarkovDecisionProcess) SetActionState(state int, action []float32)  {
@@ -37,9 +48,12 @@ func (mdp *MarkovDecisionProcess) AddFunctionInput(rHash string) {
 	if mdp.inputCounter == WindowSize {
 		mdp.totalInputEachStep = append(mdp.totalInputEachStep, mdp.inputCounter)
 		mdp.uniqueInputEachStep = append(mdp.uniqueInputEachStep, len(mdp.uniqueInputCounter))
+		mdp.updateActionsProbability()
+		mdp.nextState()
+		mdp.inputCounter = 0
+		mdp.uniqueInputCounter = make(map[string]int)
 	}
-	mdp.inputCounter = 0
-	mdp.uniqueInputCounter = make(map[string]int)
+
 	if len(mdp.totalInputEachStep) > NumberOfWindow {
 		mdp.totalInputEachStep = mdp.totalInputEachStep[1:]
 		mdp.uniqueInputEachStep = mdp.uniqueInputEachStep[1:]
@@ -47,7 +61,7 @@ func (mdp *MarkovDecisionProcess) AddFunctionInput(rHash string) {
 }
 
 func New(states []string, currentState int, actions [][]float32, fn StateUpdate, nFoC uint,
-	nTAHC uint, nNoCache uint) *MarkovDecisionProcess {
+	nTAHC uint, nNoCache uint, functionName string) *MarkovDecisionProcess {
 	return &MarkovDecisionProcess{
 		States:             states,
 		currentState:       currentState,
@@ -58,5 +72,6 @@ func New(states []string, currentState int, actions [][]float32, fn StateUpdate,
 		nFoC:               nFoC,
 		nTAHC:              nTAHC,
 		nNoCache:           nNoCache,
+		FunctionName:       functionName,
 	}
 }

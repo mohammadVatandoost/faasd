@@ -14,7 +14,7 @@ import (
 const (
 	MUFoCCacheSize  = 1 * 1024 * 1024
 	MUTAHCCacheSize = 1 * 1024 * 1024
-	UseMDPCache     = false
+	UseMDPCache     = true
 )
 
 var functionsMDP = make(map[string]*mdp.MarkovDecisionProcess)
@@ -24,9 +24,9 @@ var nFoC uint
 var nTAHC uint
 var nNoCache uint
 
-//ToDO: implement action update
+//ToDo: complete cache resize
 
-func MDPStateUpdate(lastState uint, currentState uint) (uint, uint, uint) {
+func MDPStateUpdate(lastState int, currentState int) (uint, uint, uint) {
 	mdpLock.Lock()
 	defer mdpLock.Unlock()
 	switch lastState {
@@ -62,22 +62,25 @@ func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *ht
 	mdpLock.Lock()
 	markovDecisionProcess, ok := functionsMDP[RequestURI]
 	if !ok {
+		fmt.Printf("mdpLoadBalance new function name: %v \n", RequestURI)
+		nFoC = nFoC + 1
 		markovDecisionProcess = mdp.New([]string{"FoC", "TAHC", "NoCache"},
 			0, [][]float32{
 				{0.5, 0.5, 0},
 				{0.3333, 0.3333, 0.3333},
 				{0, 0.5, 0.5},
-			}, MDPStateUpdate)
+			}, MDPStateUpdate, nFoC, nTAHC, nNoCache, RequestURI)
 		functionsMDP[RequestURI] = markovDecisionProcess
-		nFoC = nFoC + 1
 	}
 	mdpLock.Unlock()
 
 	markovDecisionProcess.AddFunctionInput(sReqHash)
-	state := markovDecisionProcess.NextState()
+	state := markovDecisionProcess.CurrentState()
+	fmt.Printf("mdpLoadBalance function name: %v, state: %v \n", RequestURI, state)
 	if state == 0 { // FoC
 		value, found := multiLRU.Get(lru.FoCCache, sReqHash)
 		if found {
+			fmt.Printf("mdpLoadBalance FOC is found function name: %v \n", RequestURI)
 			return value.([]byte), nil
 		}
 	} else if state == 1 {
