@@ -2,6 +2,7 @@ package lru
 
 import (
 	"container/list"
+	"fmt"
 	"sync"
 )
 
@@ -24,20 +25,21 @@ type Cache struct {
 type Key interface{}
 
 type entry struct {
-	key   Key
+	key   string
 	value interface{}
 	size  int
 }
 
 // Add adds a value to the cache.
-func (c *Cache) Add(key Key, value interface{}) {
+func (c *Cache) AddByteArray(key string, value []byte) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.cache == nil {
 		c.cache = make(map[interface{}]*list.Element)
 		c.ll = list.New()
 	}
-	s, _ := getRealSizeOf(value)
+	s := len(value) + len(key)
+
 	if ee, ok := c.cache[key]; ok {
 		c.ll.MoveToFront(ee)
 		c.Size = c.Size + int64(s)
@@ -49,6 +51,37 @@ func (c *Cache) Add(key Key, value interface{}) {
 	c.Size = c.Size + int64(s)
 	c.cache[key] = ele
 	if c.MaxSize != 0 && c.Size > c.MaxSize {
+		fmt.Printf("========== Cache is full, Size: %d ===========\n", c.Size)
+		for {
+			c.removeOldest()
+			if c.Size < c.MaxSize {
+				break
+			}
+		}
+	}
+}
+
+func (c *Cache) AddUint32(key string, value uint32) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if c.cache == nil {
+		c.cache = make(map[interface{}]*list.Element)
+		c.ll = list.New()
+	}
+	s := 4 + len(key)
+
+	if ee, ok := c.cache[key]; ok {
+		c.ll.MoveToFront(ee)
+		c.Size = c.Size + int64(s)
+		ee.Value.(*entry).value = value
+		ee.Value.(*entry).size = s
+		return
+	}
+	ele := c.ll.PushFront(&entry{key, value, s})
+	c.Size = c.Size + int64(s)
+	c.cache[key] = ele
+	if c.MaxSize != 0 && c.Size > c.MaxSize {
+		fmt.Printf("========== Cache is full, Size: %d ===========\n", c.Size)
 		for {
 			c.removeOldest()
 			if c.Size < c.MaxSize {
@@ -59,7 +92,7 @@ func (c *Cache) Add(key Key, value interface{}) {
 }
 
 // Get looks up a key's value from the cache.
-func (c *Cache) Get(key Key) (value interface{}, ok bool) {
+func (c *Cache) Get(key string) (value interface{}, ok bool) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.cache == nil {

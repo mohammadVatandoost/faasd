@@ -15,7 +15,7 @@ type Metric struct {
 	CacheHit     bool
 }
 
-var metricDataChan = make(chan Metric, 1000)
+var metricDataChan = make(chan *Metric, 1000)
 
 func storeMetric() {
 	csvfile, err := os.Create("benchmark_typical.csv")

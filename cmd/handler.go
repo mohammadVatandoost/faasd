@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"fmt"
 	"github.com/openfaas/faasd/internal/mdp"
 	"io"
 	"io/ioutil"
@@ -10,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -36,7 +34,7 @@ const (
 	batchTime            = 50
 	FileCaching          = false
 	BatchChecking        = false
-	StoreMetric          = false
+	StoreMetric          = true
 )
 
 type Agent struct {
@@ -63,8 +61,9 @@ var cacheHit uint
 //var batchCacheHit uint
 var cacheMiss uint
 var loadMiss uint64
-var totalTime int64
-var hashRequests = make(chan CacheCheckingReq, 100)
+
+//var totalTime int64
+//var hashRequests = make(chan CacheCheckingReq, 100)
 
 var workerCluster *cluster.Cluster
 
@@ -73,8 +72,8 @@ var workerCluster *cluster.Cluster
 // var hashRequestsResult = make(chan CacheChecking, 100)
 
 func initHandler() {
-	log.Printf("UseMDPCache: %v, UseFoCCache: %v, FunctionCachingSize: %v, UseLoadBalancerCache: %v, FileCaching: %v, \n BatchChecking: %v, batchTime: %v, UseTAHC: %v, TAHCCacheSize: %v, FoCCacheSize: %v, MDPWindowSize: %v \n",
-		UseMDPCache, UseFoCCache, MaxCacheItem, UseLoadBalancerCache, FileCaching, BatchChecking, batchTime, UseTAHC, TAHCCacheSize, FoCCacheSize, mdp.WindowSize)
+	log.Printf("UseMDPCache: %v, MDPWindowSize: %v, TotalWindowSize: %v, UpdateStateUnirary: %v, KeepHistoryOfWindow: %v \n UseFoCCache: %v, FunctionCachingSize: %v, UseLoadBalancerCache: %v, FileCaching: %v, \n BatchChecking: %v, batchTime: %v, UseTAHC: %v, TAHCCacheSize: %v, FoCCacheSize: %v,  \n",
+		UseMDPCache, mdp.WindowSize, TotalWindowSize, mdp.UpdateStateUnirary, mdp.KeepHistoryOfWindow, UseFoCCache, MaxCacheItem, UseLoadBalancerCache, FileCaching, BatchChecking, batchTime, UseTAHC, TAHCCacheSize, FoCCacheSize)
 
 	cacheHit = 0
 	cacheMiss = 0
@@ -112,9 +111,9 @@ func initHandler() {
 	//	go checkAllNodesCache()
 	//}
 	//
-	//if StoreMetric {
-	//	go storeMetric()
-	//}
+	if StoreMetric {
+		go storeMetric()
+	}
 }
 
 func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.HandlerFunc {
@@ -150,7 +149,11 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 			if err != nil {
 				log.Println("read request bodey error :", err.Error())
 			}
-			log.Println("Mohammad RequestURI: ", r.RequestURI, ", inputs:", string(bodyBytes))
+			metric := &Metric{
+				FunctionName: functionName,
+				InputSize:    len(bodyBytes),
+			}
+			//log.Println("Mohammad RequestURI: ", r.RequestURI, ", inputs:", string(bodyBytes))
 			r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
 
 			//********* check in batch caching
@@ -171,6 +174,9 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 					return
 				}
 				if res != nil {
+					resTime := time.Since(initialTime).Microseconds()
+					metric.ResponseTime = resTime
+					metricDataChan <- metric
 					clientHeader := w.Header()
 					copyHeaders(clientHeader, &res.Header)
 					w.Header().Set("Content-Type", getContentType(r.Header, res.Header))
@@ -193,14 +199,17 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 				httputil.Errorf(w, http.StatusInternalServerError, "Can't reach service for: %s.", functionName)
 				return
 			}
-			resTime := time.Since(initialTime).Microseconds()
-			atomic.AddInt64(&totalTime, resTime)
-			fmt.Printf("Function Result acheived, RequestURI: %v, decesionTime: %v us, totalTime: %v  \n",
-				functionName, time.Now().Sub(initialTime).Microseconds(), totalTime)
+
+			//atomic.AddInt64(&totalTime, resTime)
 
 			if UseFoCCache {
 				focCache.Add(checkInNodes, response)
 			}
+			resTime := time.Since(initialTime).Microseconds()
+			metric.ResponseTime = resTime
+			metricDataChan <- metric
+			//fmt.Printf("Function Result acheived, RequestURI: %v, decesionTime: %v us \n",
+			//	functionName, resTime)
 			//resSize := len(agentRes.Response)
 			res, err := unserializeReq(response, r)
 			if err != nil {

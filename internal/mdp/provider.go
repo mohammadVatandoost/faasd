@@ -1,6 +1,9 @@
 package mdp
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 type StateUpdate func(int, int) (uint, uint, uint)
 
@@ -17,18 +20,25 @@ type MarkovDecisionProcess struct {
 	nFoC                uint
 	nTAHC               uint
 	nNoCache            uint
+	addFunctionLock     sync.Mutex
 }
 
 const (
-	WindowSize     = 15
-	NumberOfWindow = 3
+	WindowSize          = 15
+	NumberOfWindow      = 3
+	KeepHistoryOfWindow = false
+	UpdateStateUnirary  = false
 )
 
 func (mdp *MarkovDecisionProcess) CurrentState() int {
+	mdp.addFunctionLock.Lock()
+	defer mdp.addFunctionLock.Unlock()
 	return mdp.currentState
 }
 
 func (mdp *MarkovDecisionProcess) nextState() {
+	//mdp.addFunctionLock.Lock()
+	//defer mdp.addFunctionLock.Unlock()
 	nextState := sample(mdp.actions[mdp.currentState])
 	if mdp.currentState != nextState {
 		mdp.nFoC, mdp.nTAHC, mdp.nNoCache = mdp.notifyStateUpdate(mdp.currentState, nextState)
@@ -43,21 +53,49 @@ func (mdp *MarkovDecisionProcess) nextState() {
 //}
 
 func (mdp *MarkovDecisionProcess) AddFunctionInput(rHash string) {
+	mdp.addFunctionLock.Lock()
 	mdp.uniqueInputCounter[rHash] = mdp.uniqueInputCounter[rHash] + 1
 	mdp.inputCounter = mdp.inputCounter + 1
-	if mdp.inputCounter == WindowSize {
-		mdp.totalInputEachStep = append(mdp.totalInputEachStep, mdp.inputCounter)
-		mdp.uniqueInputEachStep = append(mdp.uniqueInputEachStep, len(mdp.uniqueInputCounter))
+	mdp.addFunctionLock.Unlock()
+	if UpdateStateUnirary {
+		mdp.UpdateStates()
+	}
+
+}
+
+func (mdp *MarkovDecisionProcess) UpdateStates() {
+	mdp.addFunctionLock.Lock()
+	defer mdp.addFunctionLock.Unlock()
+	if UpdateStateUnirary {
+		if KeepHistoryOfWindow {
+			if mdp.inputCounter == WindowSize {
+				mdp.totalInputEachStep = append(mdp.totalInputEachStep, mdp.inputCounter)
+				mdp.uniqueInputEachStep = append(mdp.uniqueInputEachStep, len(mdp.uniqueInputCounter))
+				mdp.updateActionsProbability()
+				mdp.nextState()
+				mdp.inputCounter = 0
+				mdp.uniqueInputCounter = make(map[string]int)
+			}
+
+			if len(mdp.totalInputEachStep) > NumberOfWindow {
+				mdp.totalInputEachStep = mdp.totalInputEachStep[1:]
+				mdp.uniqueInputEachStep = mdp.uniqueInputEachStep[1:]
+			}
+		} else {
+			if mdp.inputCounter == WindowSize {
+				mdp.updateActionsProbability()
+				mdp.nextState()
+				mdp.inputCounter = 0
+				mdp.uniqueInputCounter = make(map[string]int)
+			}
+		}
+	} else {
 		mdp.updateActionsProbability()
 		mdp.nextState()
 		mdp.inputCounter = 0
 		mdp.uniqueInputCounter = make(map[string]int)
 	}
 
-	if len(mdp.totalInputEachStep) > NumberOfWindow {
-		mdp.totalInputEachStep = mdp.totalInputEachStep[1:]
-		mdp.uniqueInputEachStep = mdp.uniqueInputEachStep[1:]
-	}
 }
 
 func New(states []string, currentState int, actions [][]float32, fn StateUpdate, nFoC uint,

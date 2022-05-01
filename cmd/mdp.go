@@ -4,31 +4,34 @@ import (
 	"fmt"
 	"github.com/openfaas/faasd/internal/lru"
 	"github.com/openfaas/faasd/internal/mdp"
-	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 const (
-	MUFoCCacheSize  = 1 * 1024 * 1024
-	MUTAHCCacheSize = 1 * 1024 * 1024
+	MUFoCCacheSize  = 128 * 1024
+	MUTAHCCacheSize = 256
 	UseMDPCache     = true
+	TotalWindowSize = 50
 )
 
 var functionsMDP = make(map[string]*mdp.MarkovDecisionProcess)
 var multiLRU *lru.MultiCache
-var mdpLock sync.Mutex
+var mdpLock sync.RWMutex
+var functionCounter sync.Mutex
+var mdpReqMetricLock sync.Mutex
 var nFoC uint
 var nTAHC uint
 var nNoCache uint
+var mdpRequestCounter uint64
+var epochCounter uint
 
 //ToDo: complete cache resize
 
 func MDPStateUpdate(lastState int, currentState int) (uint, uint, uint) {
-	mdpLock.Lock()
-	defer mdpLock.Unlock()
+	functionCounter.Lock()
+	defer functionCounter.Unlock()
 	switch lastState {
 	case 0:
 		nFoC = nFoC - 1
@@ -57,10 +60,21 @@ func MDPStateUpdate(lastState int, currentState int) (uint, uint, uint) {
 	return nFoC, nTAHC, nNoCache
 }
 
+func updateMDPsState() {
+	mdpLock.RLock()
+	defer mdpLock.RUnlock()
+	epochCounter++
+	fmt.Printf("******** updateMDPsState epochCounter: %v *********** \n", epochCounter)
+	for _, markovDecisionProcess := range functionsMDP {
+		markovDecisionProcess.UpdateStates()
+	}
+}
+
 func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *http.Request) ([]byte, error) {
 	var agentId uint32
-	mdpLock.Lock()
+	mdpLock.RLock()
 	markovDecisionProcess, ok := functionsMDP[RequestURI]
+	mdpLock.RUnlock()
 	if !ok {
 		fmt.Printf("mdpLoadBalance new function name: %v \n", RequestURI)
 		nFoC = nFoC + 1
@@ -70,23 +84,32 @@ func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *ht
 				{0.3333, 0.3333, 0.3333},
 				{0, 0.5, 0.5},
 			}, MDPStateUpdate, nFoC, nTAHC, nNoCache, RequestURI)
+		mdpLock.Lock()
 		functionsMDP[RequestURI] = markovDecisionProcess
+		mdpLock.Unlock()
 	}
-	mdpLock.Unlock()
+	if !mdp.UpdateStateUnirary {
+		mdpReqMetricLock.Lock()
+		mdpRequestCounter = mdpRequestCounter + 1
+		if mdpRequestCounter%TotalWindowSize == 0 {
+			go updateMDPsState()
+		}
+		mdpReqMetricLock.Unlock()
+	}
 
 	markovDecisionProcess.AddFunctionInput(sReqHash)
 	state := markovDecisionProcess.CurrentState()
-	fmt.Printf("mdpLoadBalance function name: %v, state: %v \n", RequestURI, state)
+	//fmt.Printf("mdpLoadBalance function name: %v, state: %v \n", RequestURI, state)
 	if state == 0 { // FoC
 		value, found := multiLRU.Get(lru.FoCCache, sReqHash)
 		if found {
-			fmt.Printf("mdpLoadBalance FOC is found function name: %v \n", RequestURI)
+			//fmt.Printf("mdpLoadBalance FOC is found function name: %v \n", RequestURI)
 			return value.([]byte), nil
 		}
 	} else if state == 1 {
 		value, found := multiLRU.Get(lru.TAHCCache, sReqHash)
 		if found {
-			t1 := time.Now()
+			//t1 := time.Now()
 			agentId = value.(uint32)
 			if workerCluster.CheckAgentLoad(int(agentId)) {
 				sReq, err := captureRequestData(r)
@@ -96,9 +119,9 @@ func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *ht
 				mutexAgent.Lock()
 				cacheHit++
 				mutexAgent.Unlock()
-				duration := time.Since(t1)
-				log.Printf("UseMDPCache sendToAgent due to Cache cacheHit: %v, RequestURI :%s, duration: %v  \n",
-					cacheHit, RequestURI, duration.Microseconds())
+				//duration := time.Since(t1)
+				//log.Printf("UseMDPCache sendToAgent due to Cache cacheHit: %v, RequestURI :%s, duration: %v  \n",
+				//	cacheHit, RequestURI, duration.Microseconds())
 				res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
 				return res.Response, nil
 			}
@@ -115,9 +138,9 @@ func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *ht
 		return nil, err
 	}
 	if state == 0 {
-		multiLRU.Add(lru.FoCCache, sReqHash, res.Response)
+		multiLRU.AddByteArray(lru.FoCCache, sReqHash, res.Response)
 	} else if state == 1 {
-		multiLRU.Add(lru.TAHCCache, sReqHash, agentId)
+		multiLRU.AddUint32(lru.TAHCCache, sReqHash, agentId)
 	}
 	return res.Response, nil
 }
