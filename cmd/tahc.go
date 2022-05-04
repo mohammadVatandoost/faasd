@@ -14,7 +14,7 @@ const (
 
 var TAHCCache *lru.Cache
 
-func tahcLoadBalance(RequestURI string, sReqHash string) uint32 {
+func tahcLoadBalance(RequestURI string, sReqHash string) (uint32, bool) {
 	var agentId uint32
 	t1 := time.Now()
 	value, found := TAHCCache.Get(sReqHash)
@@ -27,14 +27,14 @@ func tahcLoadBalance(RequestURI string, sReqHash string) uint32 {
 			duration := time.Since(t1)
 			log.Printf("UseTAHC sendToAgent due to Cache cacheHit: %v, RequestURI :%s, duration: %v  \n",
 				cacheHit, RequestURI, duration.Microseconds())
-			return agentId
+			return agentId, true
 		}
 		atomic.AddUint64(&loadMiss, 1)
 	}
 	agentId = uint32(workerCluster.SelectAgent())
-	TAHCCache.Add(sReqHash, agentId)
+	TAHCCache.AddUint32(sReqHash, agentId)
 	mutexAgent.Lock()
 	cacheMiss++
 	mutexAgent.Unlock()
-	return agentId
+	return agentId, false
 }

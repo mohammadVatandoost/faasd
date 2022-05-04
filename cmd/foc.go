@@ -13,15 +13,16 @@ const (
 
 var focCache *lru.Cache
 
-func checkFoCCache(cache *lru.Cache, hashReq string, r *http.Request) (*http.Response, error) {
+func checkFoCCache(cache *lru.Cache, hashReq string, r *http.Request) (*http.Response, int, error) {
 	response, found := cache.Get(hashReq)
 	if found {
+		responseSize := len(response.([]byte))
 		res, err := unserializeReq(response.([]byte), r)
 		if err != nil {
 			log.Println("Mohammad unserialize res: ", err.Error())
-			return nil, err
+			return nil, 0, err
 		}
-		return res, nil
+		return res, responseSize, nil
 	}
-	return nil, nil
+	return nil, 0, nil
 }

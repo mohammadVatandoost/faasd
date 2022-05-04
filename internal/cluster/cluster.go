@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const MaxClientLoad = 6
+const MaxClientLoad = 8
 
 type Cluster struct {
 	agents []Agent
@@ -56,7 +56,7 @@ func (c *Cluster) SelectAgent() int {
 			return int(agentID)
 		}
 	}
-	return 0
+	return int(rand.Int31n(int32(size)))
 }
 
 func (c *Cluster) SendToAgent(Id int, RequestURI string, exteraPath string, sReq []byte,
@@ -65,6 +65,7 @@ func (c *Cluster) SendToAgent(Id int, RequestURI string, exteraPath string, sReq
 	address := c.agents[Id].Address
 	c.mutex.Unlock()
 	defer c.decreaseAgentLoad(Id)
+	//fmt.Printf("Cluster SendToAgent ID: %v, RequestURI: %v, exteraPath: %v \n", Id, RequestURI, exteraPath)
 	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		log.Printf("did not connect: %v", err)
@@ -82,6 +83,8 @@ func (c *Cluster) SendToAgent(Id int, RequestURI string, exteraPath string, sReq
 		log.Printf("could not TaskAssign: %v", err.Error())
 		return nil, err
 	}
+	//fmt.Printf("Cluster SendToAgent ID: %v, RequestURI: %v, exteraPath: %v, response: %v \n",
+	//	Id, RequestURI, exteraPath, string(r.Response))
 	return r, nil
 
 }

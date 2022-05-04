@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/openfaas/faasd/internal/mdp"
 	"io"
 	"io/ioutil"
@@ -72,8 +73,8 @@ var workerCluster *cluster.Cluster
 // var hashRequestsResult = make(chan CacheChecking, 100)
 
 func initHandler() {
-	log.Printf("UseMDPCache: %v, MDPWindowSize: %v, TotalWindowSize: %v, UpdateStateUnirary: %v, KeepHistoryOfWindow: %v \n UseFoCCache: %v, FunctionCachingSize: %v, UseLoadBalancerCache: %v, FileCaching: %v, \n BatchChecking: %v, batchTime: %v, UseTAHC: %v, TAHCCacheSize: %v, FoCCacheSize: %v,  \n",
-		UseMDPCache, mdp.WindowSize, TotalWindowSize, mdp.UpdateStateUnirary, mdp.KeepHistoryOfWindow, UseFoCCache, MaxCacheItem, UseLoadBalancerCache, FileCaching, BatchChecking, batchTime, UseTAHC, TAHCCacheSize, FoCCacheSize)
+	log.Printf("UseMDPCache: %v, MUTAHCCacheSize: %v, MUFoCCacheSize: %v, MDPWindowSize: %v, TotalWindowSize: %v, UpdateStateUnirary: %v, KeepHistoryOfWindow: %v \n UseFoCCache: %v, FunctionCachingSize: %v, UseLoadBalancerCache: %v, FileCaching: %v, \n BatchChecking: %v, batchTime: %v, UseTAHC: %v, TAHCCacheSize: %v, FoCCacheSize: %v,  \n",
+		UseMDPCache, MUTAHCCacheSize, MUFoCCacheSize, mdp.WindowSize, TotalWindowSize, mdp.UpdateStateUnirary, mdp.KeepHistoryOfWindow, UseFoCCache, MaxCacheItem, UseLoadBalancerCache, FileCaching, BatchChecking, batchTime, UseTAHC, TAHCCacheSize, FoCCacheSize)
 
 	cacheHit = 0
 	cacheMiss = 0
@@ -94,10 +95,12 @@ func initHandler() {
 	workerCluster = cluster.NewCluster()
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: "127.0.0.1:50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 1, Address: "127.0.0.1:50062", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: "10.64.144.223:50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: "10.64.144.93:50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: "10.64.144.79:50061", Loads: 0})
-	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: "10.64.144.228:50061", Loads: 0})
+
+	workerCluster.AddAgent(cluster.Agent{Id: 0, Address: "10.64.144.140:50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 1, Address: "10.64.144.53:50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 2, Address: "10.64.144.78:50061", Loads: 0})
+	workerCluster.AddAgent(cluster.Agent{Id: 3, Address: "10.64.144.138:50061", Loads: 0})
+
 	//workerCluster.AddAgent(cluster.Agent{Id: 0, Address: IPAddress + ":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 1, Address: IPAddress + ":50061", Loads: 0})
 	//workerCluster.AddAgent(cluster.Agent{Id: 3, Address: IPAddress + ":50061", Loads: 0})
@@ -117,7 +120,7 @@ func initHandler() {
 }
 
 func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.HandlerFunc {
-	log.Println("Mohammad NewHandlerFunc")
+	//log.Println("Mohammad NewHandlerFunc")
 	if resolver == nil {
 		panic("NewHandlerFunc: empty proxy handler resolver, cannot be nil")
 	}
@@ -159,6 +162,7 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 			//********* check in batch caching
 			var checkInNodes string
 			checkInNodes = hash(append([]byte(functionName), bodyBytes...))
+			//fmt.Printf("length of hash: %v \n", len(checkInNodes))
 			if BatchChecking {
 				if FileCaching {
 					checkInNodes = string(bodyBytes)
@@ -167,7 +171,7 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 
 			//*********** cache  ******************
 			if UseFoCCache {
-				res, err := checkFoCCache(focCache, checkInNodes, r)
+				res, resultSize, err := checkFoCCache(focCache, checkInNodes, r)
 				if err != nil {
 					log.Println("Mohammad unserialize res: ", err.Error())
 					httputil.Errorf(w, http.StatusInternalServerError, "Can't unserialize res: %s.", functionName)
@@ -175,7 +179,9 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 				}
 				if res != nil {
 					resTime := time.Since(initialTime).Microseconds()
+					metric.ResultSize = resultSize
 					metric.ResponseTime = resTime
+					metric.CacheHit = true
 					metricDataChan <- metric
 					clientHeader := w.Header()
 					copyHeaders(clientHeader, &res.Header)
@@ -194,7 +200,7 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 
 			//proxy.ProxyRequest(w, r, proxyClient, resolver)
 			// mctx := opentracing.ContextWithSpan(context.Background(), span)
-			response, err := loadBalancer(functionName, exteraPath, r, checkInNodes)
+			response, cacheHitted, err := loadBalancer(functionName, exteraPath, r, checkInNodes)
 			if err != nil {
 				httputil.Errorf(w, http.StatusInternalServerError, "Can't reach service for: %s.", functionName)
 				return
@@ -203,13 +209,15 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver) http.Hand
 			//atomic.AddInt64(&totalTime, resTime)
 
 			if UseFoCCache {
-				focCache.Add(checkInNodes, response)
+				focCache.AddByteArray(checkInNodes, response)
 			}
 			resTime := time.Since(initialTime).Microseconds()
 			metric.ResponseTime = resTime
+			metric.ResultSize = len(response)
+			metric.CacheHit = cacheHitted
 			metricDataChan <- metric
-			//fmt.Printf("Function Result acheived, RequestURI: %v, decesionTime: %v us \n",
-			//	functionName, resTime)
+			fmt.Printf("Function Result acheived, RequestURI: %v, ResponseTime: %v us, ResultSize: %v \n",
+				functionName, resTime, len(response))
 			//resSize := len(agentRes.Response)
 			res, err := unserializeReq(response, r)
 			if err != nil {

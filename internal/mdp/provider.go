@@ -1,7 +1,6 @@
 package mdp
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -21,31 +20,10 @@ type MarkovDecisionProcess struct {
 	nTAHC               uint
 	nNoCache            uint
 	addFunctionLock     sync.Mutex
-}
-
-const (
-	WindowSize          = 15
-	NumberOfWindow      = 3
-	KeepHistoryOfWindow = false
-	UpdateStateUnirary  = false
-)
-
-func (mdp *MarkovDecisionProcess) CurrentState() int {
-	mdp.addFunctionLock.Lock()
-	defer mdp.addFunctionLock.Unlock()
-	return mdp.currentState
-}
-
-func (mdp *MarkovDecisionProcess) nextState() {
-	//mdp.addFunctionLock.Lock()
-	//defer mdp.addFunctionLock.Unlock()
-	nextState := sample(mdp.actions[mdp.currentState])
-	if mdp.currentState != nextState {
-		mdp.nFoC, mdp.nTAHC, mdp.nNoCache = mdp.notifyStateUpdate(mdp.currentState, nextState)
-	}
-	fmt.Printf("mdp function name: %v, nextState: %v, currentState: %v, actions: %v \n",
-		mdp.FunctionName, nextState, mdp.currentState, mdp.actions)
-	mdp.currentState = nextState
+	addAVGResponseTime  sync.Mutex
+	avgResponsesCounter int
+	sumResponsesTime    int64
+	totalAVGResponses   int
 }
 
 //func (mdp *MarkovDecisionProcess) SetActionState(state int, action []float32)  {
@@ -63,53 +41,27 @@ func (mdp *MarkovDecisionProcess) AddFunctionInput(rHash string) {
 
 }
 
-func (mdp *MarkovDecisionProcess) UpdateStates() {
-	mdp.addFunctionLock.Lock()
-	defer mdp.addFunctionLock.Unlock()
-	if UpdateStateUnirary {
-		if KeepHistoryOfWindow {
-			if mdp.inputCounter == WindowSize {
-				mdp.totalInputEachStep = append(mdp.totalInputEachStep, mdp.inputCounter)
-				mdp.uniqueInputEachStep = append(mdp.uniqueInputEachStep, len(mdp.uniqueInputCounter))
-				mdp.updateActionsProbability()
-				mdp.nextState()
-				mdp.inputCounter = 0
-				mdp.uniqueInputCounter = make(map[string]int)
-			}
-
-			if len(mdp.totalInputEachStep) > NumberOfWindow {
-				mdp.totalInputEachStep = mdp.totalInputEachStep[1:]
-				mdp.uniqueInputEachStep = mdp.uniqueInputEachStep[1:]
-			}
-		} else {
-			if mdp.inputCounter == WindowSize {
-				mdp.updateActionsProbability()
-				mdp.nextState()
-				mdp.inputCounter = 0
-				mdp.uniqueInputCounter = make(map[string]int)
-			}
-		}
-	} else {
-		mdp.updateActionsProbability()
-		mdp.nextState()
-		mdp.inputCounter = 0
-		mdp.uniqueInputCounter = make(map[string]int)
-	}
-
+func (mdp *MarkovDecisionProcess) AddAVGResponseTime(avgResponseTime int64) {
+	mdp.addAVGResponseTime.Lock()
+	defer mdp.addAVGResponseTime.Unlock()
+	mdp.avgResponsesCounter = mdp.avgResponsesCounter + 1
+	mdp.sumResponsesTime = mdp.sumResponsesTime + avgResponseTime
 }
 
 func New(states []string, currentState int, actions [][]float32, fn StateUpdate, nFoC uint,
 	nTAHC uint, nNoCache uint, functionName string) *MarkovDecisionProcess {
 	return &MarkovDecisionProcess{
-		States:             states,
-		currentState:       currentState,
-		actions:            actions,
-		uniqueInputCounter: make(map[string]int),
-		inputCounter:       0,
-		notifyStateUpdate:  fn,
-		nFoC:               nFoC,
-		nTAHC:              nTAHC,
-		nNoCache:           nNoCache,
-		FunctionName:       functionName,
+		States:              states,
+		currentState:        currentState,
+		actions:             actions,
+		uniqueInputCounter:  make(map[string]int),
+		inputCounter:        0,
+		notifyStateUpdate:   fn,
+		nFoC:                nFoC,
+		nTAHC:               nTAHC,
+		nNoCache:            nNoCache,
+		FunctionName:        functionName,
+		avgResponsesCounter: 0,
+		sumResponsesTime:    0,
 	}
 }

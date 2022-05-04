@@ -10,9 +10,11 @@ import (
 )
 
 const (
+	HASHSIZE        = 40
+	NODEIDSIZE      = 4
 	MUFoCCacheSize  = 128 * 1024
-	MUTAHCCacheSize = 256
-	UseMDPCache     = true
+	MUTAHCCacheSize = (HASHSIZE + NODEIDSIZE + 1) * 5 // 1 is for not equality
+	UseMDPCache     = false
 	TotalWindowSize = 50
 )
 
@@ -64,13 +66,21 @@ func updateMDPsState() {
 	mdpLock.RLock()
 	defer mdpLock.RUnlock()
 	epochCounter++
-	fmt.Printf("******** updateMDPsState epochCounter: %v *********** \n", epochCounter)
+
+	totalAVGResponseTime := int64(0)
 	for _, markovDecisionProcess := range functionsMDP {
+		totalAVGResponseTime = totalAVGResponseTime + markovDecisionProcess.GetAVGResponseTime()
+	}
+	avgResponseTime := int(totalAVGResponseTime / int64(len(functionsMDP)))
+	for _, markovDecisionProcess := range functionsMDP {
+		markovDecisionProcess.SetTotalAVGResponseTime(avgResponseTime)
 		markovDecisionProcess.UpdateStates()
 	}
+	fmt.Printf("******** updateMDPsState epochCounter: %v, avgResponseTime: %v *********** \n",
+		epochCounter, avgResponseTime)
 }
 
-func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *http.Request) ([]byte, error) {
+func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *http.Request) ([]byte, bool, error) {
 	var agentId uint32
 	mdpLock.RLock()
 	markovDecisionProcess, ok := functionsMDP[RequestURI]
@@ -104,7 +114,7 @@ func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *ht
 		value, found := multiLRU.Get(lru.FoCCache, sReqHash)
 		if found {
 			//fmt.Printf("mdpLoadBalance FOC is found function name: %v \n", RequestURI)
-			return value.([]byte), nil
+			return value.([]byte), true, nil
 		}
 	} else if state == 1 {
 		value, found := multiLRU.Get(lru.TAHCCache, sReqHash)
@@ -114,7 +124,7 @@ func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *ht
 			if workerCluster.CheckAgentLoad(int(agentId)) {
 				sReq, err := captureRequestData(r)
 				if err != nil {
-					return nil, err
+					return nil, false, err
 				}
 				mutexAgent.Lock()
 				cacheHit++
@@ -123,24 +133,24 @@ func mdpLoadBalance(RequestURI string, sReqHash string, exteraPath string, r *ht
 				//log.Printf("UseMDPCache sendToAgent due to Cache cacheHit: %v, RequestURI :%s, duration: %v  \n",
 				//	cacheHit, RequestURI, duration.Microseconds())
 				res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
-				return res.Response, nil
+				return res.Response, true, nil
 			}
 			atomic.AddUint64(&loadMiss, 1)
 		}
 	}
 	sReq, err := captureRequestData(r)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	agentId = uint32(workerCluster.SelectAgent())
 	res, err := workerCluster.SendToAgent(int(agentId), RequestURI, exteraPath, sReq, true)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if state == 0 {
 		multiLRU.AddByteArray(lru.FoCCache, sReqHash, res.Response)
 	} else if state == 1 {
 		multiLRU.AddUint32(lru.TAHCCache, sReqHash, agentId)
 	}
-	return res.Response, nil
+	return res.Response, false, nil
 }

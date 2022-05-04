@@ -32,7 +32,7 @@ func storeMetric() {
 			tmp = "True"
 		}
 		csvwriter.Write([]string{m.FunctionName,
-			strconv.FormatInt(m.ResponseTime, 10),
+			strconv.Itoa(int(m.ResponseTime)),
 			strconv.Itoa(m.InputSize), strconv.Itoa(m.ResultSize), tmp})
 		csvwriter.Flush()
 	}
